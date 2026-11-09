@@ -12,7 +12,10 @@ from apps.campaigns.models import (
 
 
 class CampaignBidSerializer(serializers.ModelSerializer):
-    """Serializer representing creator campaign application bid."""
+    """
+    Serializer representing creator campaign application bid.
+    Exposes creator details, financial quotations, and pitch proposals.
+    """
     creator_name = serializers.CharField(source='creator.display_name', read_only=True)
     creator_handle = serializers.CharField(source='creator.handle', read_only=True)
     creator_photo = serializers.CharField(source='creator.photo_url', read_only=True)
@@ -22,6 +25,7 @@ class CampaignBidSerializer(serializers.ModelSerializer):
     fee = serializers.SerializerMethodField()
     currency = serializers.CharField(source='campaign.currency', read_only=True)
     date = serializers.SerializerMethodField()
+    pitch_text = serializers.CharField(source='pitch', read_only=True)
 
     class Meta:
         model = CampaignBid
@@ -38,6 +42,7 @@ class CampaignBidSerializer(serializers.ModelSerializer):
             'proposed_fee_cents',
             'fee',
             'currency',
+            'pitch',
             'pitch_text',
             'status',
             'date',
@@ -45,10 +50,22 @@ class CampaignBidSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'creator', 'creator_name', 'creator_handle', 'creator_photo', 'created_at']
 
-    def get_fee(self, obj):
+    def get_fee(self, obj: CampaignBid) -> int:
+        """
+        Derive whole-unit quotation fee from cents.
+
+        :param obj: CampaignBid instance.
+        :return: Integer fee in major currency units.
+        """
         return (obj.proposed_fee_cents or 0) // 100
 
-    def get_date(self, obj):
+    def get_date(self, obj: CampaignBid) -> str:
+        """
+        Format submission timestamp for card UI representation.
+
+        :param obj: CampaignBid instance.
+        :return: Short human-readable date string (e.g. 'Nov 09').
+        """
         return obj.created_at.strftime("%b %d") if obj.created_at else ""
 
 

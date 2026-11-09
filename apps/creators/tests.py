@@ -280,3 +280,79 @@ class CreatorMediaUploadSecurityTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['file_name'], 'promo.mp4')
 
+
+class AdminInfluencerDetailRegressionTests(APITestCase):
+    """
+    Regression test suite verifying admin influencer detail endpoint
+    and nested serializer field configuration (location_text, languages, service areas).
+    """
+
+    def setUp(self) -> None:
+        """
+        Create superuser admin and creator with location and languages.
+
+        :return: None
+        """
+        from apps.taxonomies.models import Location, LocationType
+        from apps.creators.models import CreatorLanguage, CreatorServiceArea
+
+        self.admin_user = User.objects.create_superuser(
+            username='admin_test',
+            email='admin.test@example.com',
+            password='AdminPassword123!',
+            role=UserRole.SUPER_ADMIN
+        )
+        self.creator_user = User.objects.create_user(
+            username='influencer_sample',
+            email='influencer.sample@example.com',
+            password='CreatorPassword123!',
+            role=UserRole.CREATOR
+        )
+        self.loc_country = Location.objects.create(
+            name='India',
+            type=LocationType.COUNTRY,
+            country_code='IN'
+        )
+        self.loc_city = Location.objects.create(
+            name='Kochi',
+            type=LocationType.CITY,
+            parent=self.loc_country,
+            country_code='IN',
+            latitude='9.9312',
+            longitude='76.2673'
+        )
+        self.creator_profile = CreatorProfile.objects.create(
+            user=self.creator_user,
+            handle='kochi_creator',
+            display_name='Kochi Creator',
+            primary_location=self.loc_city
+        )
+        CreatorLanguage.objects.create(
+            creator=self.creator_profile,
+            language_code='ml'
+        )
+        CreatorServiceArea.objects.create(
+            creator=self.creator_profile,
+            location=self.loc_city
+        )
+        self.detail_url = reverse('admin_influencers_detail', kwargs={'pk': self.creator_profile.id})
+
+    def test_admin_influencer_detail_success(self) -> None:
+        """
+        Ensure GET /api/v1/admin/influencers/<id>/ returns HTTP 200 with populated location_text and languages.
+
+        :return: None
+        """
+        self.client.force_authenticate(user=self.admin_user)
+        response = self.client.get(self.detail_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['handle'], 'kochi_creator')
+        self.assertEqual(response.data['display_name'], 'Kochi Creator')
+        self.assertIn('Kochi', response.data['location_text'])
+        self.assertEqual(len(response.data['languages']), 1)
+        self.assertEqual(response.data['languages'][0]['language_code'], 'ml')
+        self.assertEqual(response.data['languages'][0]['language_name'], 'Malayalam')
+        self.assertEqual(len(response.data['service_areas']), 1)
+        self.assertEqual(response.data['service_areas'][0]['location']['name'], 'Kochi')
+

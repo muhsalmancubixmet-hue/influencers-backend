@@ -27,21 +27,52 @@ class CreatorCategorySerializer(serializers.ModelSerializer):
 
 
 class CreatorLanguageSerializer(serializers.ModelSerializer):
-    """Serializer for creator spoken/content languages."""
+    """
+    Serializer representing creator spoken/content language proficiencies.
+    Translates two-letter ISO 639 codes into human-readable language titles.
+    """
+    language_name = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = CreatorLanguage
-        fields = ['id', 'language_code', 'language_name', 'proficiency']
+        fields = ['id', 'language_code', 'language_name']
+        read_only_fields = ['id', 'language_name']
+
+    def get_language_name(self, obj: CreatorLanguage) -> str:
+        """
+        Derive friendly human-readable language title from ISO language code.
+
+        :param obj: CreatorLanguage instance.
+        :return: Human readable language name or uppercase code.
+        """
+        code = (obj.language_code or '').lower()
+        mapping = {
+            'en': 'English',
+            'ml': 'Malayalam',
+            'hi': 'Hindi',
+            'ta': 'Tamil',
+            'te': 'Telugu',
+            'kn': 'Kannada',
+            'ar': 'Arabic',
+            'es': 'Spanish',
+            'fr': 'French',
+            'de': 'German',
+        }
+        return mapping.get(code, code.upper())
 
 
 class CreatorServiceAreaSerializer(serializers.ModelSerializer):
-    """Serializer for creator regional operating radius."""
+    """
+    Serializer for creator regional operating coverage radius.
+    Maps foreign key Location node with full geographic hierarchy.
+    """
     location = LocationSerializer(read_only=True)
     location_id = serializers.UUIDField(write_only=True)
 
     class Meta:
         model = CreatorServiceArea
-        fields = ['id', 'location', 'location_id', 'radius_km']
+        fields = ['id', 'location', 'location_id']
+        read_only_fields = ['id', 'location']
 
 
 class PortfolioItemSerializer(serializers.ModelSerializer):
@@ -462,6 +493,7 @@ class AdminInfluencerDetailSerializer(serializers.ModelSerializer):
     service_areas = CreatorServiceAreaSerializer(many=True, read_only=True)
     primary_location_details = LocationSerializer(source='primary_location', read_only=True)
     current_location_details = LocationSerializer(source='current_location', read_only=True)
+    location_text = serializers.SerializerMethodField(read_only=True)
     socials = serializers.SerializerMethodField()
     portfolio = serializers.SerializerMethodField()
     services = serializers.SerializerMethodField()
@@ -505,6 +537,23 @@ class AdminInfluencerDetailSerializer(serializers.ModelSerializer):
             'account',
             'created_at'
         ]
+
+    def get_location_text(self, obj: CreatorProfile) -> str:
+        """
+        Compile human-readable location description from primary location node.
+
+        :param obj: CreatorProfile instance.
+        :return: Comma-separated geographic breadcrumb or empty string.
+        """
+        if obj.primary_location:
+            loc = obj.primary_location
+            parts = [loc.name]
+            if loc.parent and loc.parent.name not in parts and loc.parent.name != "India":
+                parts.append(loc.parent.name)
+            if loc.country_code:
+                parts.append("India" if loc.country_code == "IN" else loc.country_code)
+            return ", ".join(parts)
+        return ""
 
     def get_socials(self, obj):
         accs = obj.social_accounts.filter(is_deleted=False)

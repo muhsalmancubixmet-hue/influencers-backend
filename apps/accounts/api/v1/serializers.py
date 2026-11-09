@@ -127,9 +127,14 @@ class RolePermissionSerializer(serializers.ModelSerializer):
 
 
 class RoleTemplateSerializer(serializers.ModelSerializer):
-    """Serializer representing a standard staff role template with clearance matrix."""
+    """
+    Serializer representing a standard staff role template with clearance matrix.
+    Computes url-safe slugs and maps system protection flags.
+    """
     permissions = RolePermissionSerializer(many=True, read_only=True)
     assigned_count = serializers.IntegerField(source='assigned_staff.count', read_only=True)
+    slug = serializers.SerializerMethodField(read_only=True)
+    is_system = serializers.BooleanField(source='is_system_role', read_only=True)
 
     class Meta:
         model = RoleTemplate
@@ -144,6 +149,16 @@ class RoleTemplateSerializer(serializers.ModelSerializer):
             'created_at'
         ]
         read_only_fields = ['id', 'is_system', 'assigned_count', 'permissions', 'created_at']
+
+    def get_slug(self, obj: RoleTemplate) -> str:
+        """
+        Derive URL-safe slug from role template name.
+
+        :param obj: RoleTemplate instance.
+        :return: Slugified lowercase role name string.
+        """
+        from django.utils.text import slugify
+        return slugify(obj.name)
 
 
 class StaffUserSerializer(serializers.ModelSerializer):

@@ -236,3 +236,30 @@ class CacheSettingsSecurityTests(TestCase):
         self.assertTrue(pool.connection_kwargs.get('ssl_check_hostname'))
 
 
+class RoleTemplateSerializerRegressionTests(TestCase):
+    """
+    Regression test suite verifying RoleTemplateSerializer field configuration
+    and slugification.
+    """
+
+    def test_role_template_serializer_success(self) -> None:
+        """
+        Ensure RoleTemplateSerializer correctly serializes name, slug, and is_system.
+
+        :return: None
+        """
+        from apps.accounts.models import RoleTemplate
+        from apps.accounts.api.v1.serializers import RoleTemplateSerializer
+
+        role = RoleTemplate.objects.create(
+            name='Content Moderator',
+            description='Reviews creator content and profiles',
+            is_system_role=True
+        )
+        serializer = RoleTemplateSerializer(role)
+
+        self.assertEqual(serializer.data['name'], 'Content Moderator')
+        self.assertEqual(serializer.data['slug'], 'content-moderator')
+        self.assertTrue(serializer.data['is_system'])
+
+

@@ -57,3 +57,21 @@ class PublicInquiryRateLimitSecurityTests(TestCase):
         # 11th request exceeds the 10/minute inquiry rate and must return 429
         throttled_response = self.client.post(url, payload, format='json')
         self.assertEqual(throttled_response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+
+class CampaignBidSerializerRegressionTests(TestCase):
+    """
+    Regression test suite verifying CampaignBidSerializer field mapping
+    (pitch vs pitch_text).
+    """
+
+    def test_campaign_bid_serializer_field_mapping(self) -> None:
+        """
+        Verify that CampaignBidSerializer can be instantiated and maps pitch to pitch_text.
+
+        :return: None
+        """
+        from apps.campaigns.api.v1.serializers import CampaignBidSerializer
+        serializer = CampaignBidSerializer()
+        self.assertIn('pitch', serializer.fields)
+        self.assertIn('pitch_text', serializer.fields)
