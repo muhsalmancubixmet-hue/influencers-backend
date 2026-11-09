@@ -411,26 +411,65 @@ class CreatorMediaUploadView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    # Security constraints for file uploads per BACKEND_ENGINEERING_RULES Section 5
+    MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB maximum upload limit
+    ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.pdf', '.mp4'}
+    IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
+    BLOCKED_EXTENSIONS = {'.svg', '.html', '.htm', '.xhtml', '.js', '.exe', '.sh', '.bat', '.php'}
+
     def post(self, request, *args, **kwargs):
         """
-        Receive uploaded file, persist to disk/storage, record MediaAsset, and update profile if applicable.
+        Receive uploaded file, validate size, extension, and image integrity, persist to disk/storage,
+        record MediaAsset, and update profile if applicable.
 
         :param request: Authenticated HTTP request containing multipart 'file' and optional 'file_type'.
-        :return: JSON response with file URL and MediaAsset metadata.
+        :return: JSON response with file URL and MediaAsset metadata, or 400 Bad Request if validation fails.
+        :raises None: Validation failures return formatted Response objects.
         """
         import os
         import uuid
         from django.conf import settings
         from django.core.files.storage import default_storage
+        from PIL import Image
         from apps.common.models import MediaAsset, MediaType
 
+        # Step 1: Validate creator profile ownership and access boundary
         profile = get_creator_profile_or_403(request.user)
         if not profile:
             return Response({'detail': 'Creator profile not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+        # Step 2: Ensure file was provided in multipart payload
         uploaded_file = request.FILES.get('file')
         if not uploaded_file:
             return Response({'detail': "No file provided in 'file' field."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Step 3: Validate file size (10 MB maximum limit)
+        if uploaded_file.size > self.MAX_UPLOAD_SIZE_BYTES:
+            return Response(
+                {'detail': 'File size exceeds maximum allowed limit of 10MB.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Step 4: Validate extension against whitelist and blocked list (.svg, .html, etc.)
+        ext = os.path.splitext(uploaded_file.name)[1].lower()
+        if ext in self.BLOCKED_EXTENSIONS or ext not in self.ALLOWED_EXTENSIONS:
+            return Response(
+                {'detail': f'File type "{ext}" is not permitted.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Step 5: For image formats, verify file integrity and structure with Pillow
+        if ext in self.IMAGE_EXTENSIONS:
+            try:
+                img = Image.open(uploaded_file)
+                img.verify()
+                # Reset file read pointer after Pillow verification
+                uploaded_file.seek(0)
+            except Exception:
+                return Response(
+                    {'detail': 'Invalid or corrupted image content.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
         file_type_param = request.data.get('file_type', 'IMAGE').upper()
         # Map param to MediaType choice
@@ -443,8 +482,7 @@ class CreatorMediaUploadView(APIView):
         }
         asset_type = type_mapping.get(file_type_param, MediaType.IMAGE)
 
-        # Generate unique storage filename
-        ext = os.path.splitext(uploaded_file.name)[1].lower()
+        # Generate unique storage filename with server-controlled UUID
         unique_name = f"creators/{profile.id}/{uuid.uuid4().hex}{ext}"
         saved_path = default_storage.save(unique_name, uploaded_file)
         relative_url = default_storage.url(saved_path)
@@ -452,7 +490,7 @@ class CreatorMediaUploadView(APIView):
         # Build absolute URL if needed or use relative URL
         full_url = request.build_absolute_uri(relative_url)
 
-        # Record MediaAsset
+        # Record MediaAsset entity
         media_asset = MediaAsset.objects.create(
             uploader=request.user,
             file_name=uploaded_file.name,

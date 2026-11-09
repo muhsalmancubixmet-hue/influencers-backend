@@ -1,3 +1,215 @@
-from django.test import TestCase
+import io
+from PIL import Image
+from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.urls import reverse
+from rest_framework import status
+from rest_framework.test import APITestCase
 
-# Create your tests here.
+from apps.accounts.models import UserRole
+from apps.creators.models import CreatorProfile
+
+User = get_user_model()
+
+
+def generate_test_image_bytes(image_format: str = 'PNG') -> bytes:
+    """
+    Generate minimal valid image byte content for testing image uploads.
+
+    :param image_format: Valid Pillow image format string (e.g. 'PNG', 'JPEG').
+    :return: Bytes of generated image.
+    """
+    buf = io.BytesIO()
+    image = Image.new('RGB', (10, 10), color='blue')
+    image.save(buf, format=image_format)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+class CreatorMediaUploadSecurityTests(APITestCase):
+    """
+    Test suite validating upload security constraints (SEC-CRIT-04).
+    Enforces extension whitelist, file size limit, and image structure verification.
+    """
+
+    def setUp(self) -> None:
+        """
+        Seed database with authenticated creator user and profile.
+
+        :return: None
+        """
+        # Step 1: Create creator user
+        self.creator_user = User.objects.create_user(
+            username='creator_upload_user',
+            email='creator.upload@example.com',
+            password='SecurePassword123!',
+            role=UserRole.CREATOR
+        )
+        # Step 2: Create associated CreatorProfile
+        self.creator_profile = CreatorProfile.objects.create(
+            user=self.creator_user,
+            handle='upload_creator',
+            display_name='Upload Creator'
+        )
+        # Step 3: Determine media upload endpoint URL
+        self.upload_url = reverse('creator_media_upload')
+
+    def test_valid_image_upload_success(self) -> None:
+        """
+        Ensure authentic image file with whitelisted extension (.png) is accepted.
+
+        :return: None
+        """
+        self.client.force_authenticate(user=self.creator_user)
+        image_content = generate_test_image_bytes('PNG')
+        uploaded_file = SimpleUploadedFile(
+            name='avatar.png',
+            content=image_content,
+            content_type='image/png'
+        )
+
+        response = self.client.post(
+            self.upload_url,
+            {'file': uploaded_file, 'file_type': 'AVATAR'},
+            format='multipart'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn('url', response.data)
+        self.assertEqual(response.data['file_name'], 'avatar.png')
+
+    def test_oversized_file_rejected(self) -> None:
+        """
+        Ensure file exceeding 10MB limit is rejected with 400 Bad Request.
+
+        :return: None
+        """
+        self.client.force_authenticate(user=self.creator_user)
+        # 10 MB + 1 byte payload
+        oversized_content = b'0' * (10 * 1024 * 1024 + 1)
+        oversized_file = SimpleUploadedFile(
+            name='large_asset.png',
+            content=oversized_content,
+            content_type='image/png'
+        )
+
+        response = self.client.post(
+            self.upload_url,
+            {'file': oversized_file},
+            format='multipart'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('File size exceeds maximum allowed limit', response.data.get('detail', ''))
+
+    def test_svg_file_strictly_blocked(self) -> None:
+        """
+        Ensure SVG vector uploads are blocked to prevent Stored XSS attacks.
+
+        :return: None
+        """
+        self.client.force_authenticate(user=self.creator_user)
+        svg_content = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+        svg_file = SimpleUploadedFile(
+            name='vector_payload.svg',
+            content=svg_content,
+            content_type='image/svg+xml'
+        )
+
+        response = self.client.post(
+            self.upload_url,
+            {'file': svg_file},
+            format='multipart'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('not permitted', response.data.get('detail', ''))
+
+    def test_html_file_strictly_blocked(self) -> None:
+        """
+        Ensure HTML file uploads are blocked to prevent client script execution.
+
+        :return: None
+        """
+        self.client.force_authenticate(user=self.creator_user)
+        html_content = b'<!DOCTYPE html><html><body><script>alert("xss")</script></body></html>'
+        html_file = SimpleUploadedFile(
+            name='index.html',
+            content=html_content,
+            content_type='text/html'
+        )
+
+        response = self.client.post(
+            self.upload_url,
+            {'file': html_file},
+            format='multipart'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('not permitted', response.data.get('detail', ''))
+
+    def test_disallowed_extension_rejected(self) -> None:
+        """
+        Ensure executable/script files (.exe, .sh, etc.) outside whitelist are rejected.
+
+        :return: None
+        """
+        self.client.force_authenticate(user=self.creator_user)
+        payload = SimpleUploadedFile(
+            name='malicious.exe',
+            content=b'MZBINARYCONTENT',
+            content_type='application/x-msdownload'
+        )
+
+        response = self.client.post(
+            self.upload_url,
+            {'file': payload},
+            format='multipart'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('not permitted', response.data.get('detail', ''))
+
+    def test_fake_image_rejected_by_pillow(self) -> None:
+        """
+        Ensure file disguised with .png extension but invalid image bytes is rejected by Pillow.
+
+        :return: None
+        """
+        self.client.force_authenticate(user=self.creator_user)
+        fake_image = SimpleUploadedFile(
+            name='fake_photo.png',
+            content=b'THIS_IS_NOT_A_REAL_PNG_IMAGE_FILE',
+            content_type='image/png'
+        )
+
+        response = self.client.post(
+            self.upload_url,
+            {'file': fake_image},
+            format='multipart'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid or corrupted image content', response.data.get('detail', ''))
+
+    def test_valid_pdf_document_upload_success(self) -> None:
+        """
+        Ensure valid document file (.pdf) is accepted for document asset uploads.
+
+        :return: None
+        """
+        self.client.force_authenticate(user=self.creator_user)
+        pdf_file = SimpleUploadedFile(
+            name='media_kit.pdf',
+            content=b'%PDF-1.4 mock content for pdf media kit',
+            content_type='application/pdf'
+        )
+
+        response = self.client.post(
+            self.upload_url,
+            {'file': pdf_file, 'file_type': 'DOCUMENT'},
+            format='multipart'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['file_name'], 'media_kit.pdf')
