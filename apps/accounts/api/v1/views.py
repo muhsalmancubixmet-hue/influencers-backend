@@ -3,6 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -48,6 +49,8 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     """
     serializer_class = CustomTokenObtainPairSerializer
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
 
 
 class RoleTemplateListView(APIView):
@@ -162,6 +165,8 @@ class StaffInviteAcceptView(APIView):
     Validates token, sets account password, and issues SimpleJWT access tokens.
     """
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
 
     def post(self, request, *args, **kwargs):
         """
@@ -209,6 +214,8 @@ class StaffInviteRevokeView(APIView):
     Allows an invited prospective staff member or administrator to decline/revoke an invitation.
     """
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
 
     def post(self, request, *args, **kwargs):
         """
@@ -288,6 +295,8 @@ class CreatorRegistrationView(APIView):
     and dispatches verification email asynchronously.
     """
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
 
     def post(self, request, *args, **kwargs):
         """
@@ -331,6 +340,8 @@ class EmailVerificationView(APIView):
     for immediate one-click authenticated dashboard access.
     """
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
 
     def post(self, request, *args, **kwargs):
         """
@@ -374,6 +385,8 @@ class RevokeRegistrationView(APIView):
     Instantly revoke an unconfirmed or unintended creator registration.
     """
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
 
     def post(self, request, *args, **kwargs):
         """
@@ -402,6 +415,8 @@ class PasswordChangeView(APIView):
     Verifies user's active current password before applying new credentials.
     """
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
 
     def post(self, request, *args, **kwargs):
         """

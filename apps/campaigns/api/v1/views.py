@@ -3,6 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.throttling import ScopedRateThrottle
 from django.core.exceptions import ValidationError
 
 from apps.accounts.decorators import require_module_access
@@ -428,6 +429,8 @@ class PublicInquiryCreateView(APIView):
     Allows brand clients and visitors to propose campaigns to creators.
     """
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'inquiry'
 
     def post(self, request, *args, **kwargs):
         """

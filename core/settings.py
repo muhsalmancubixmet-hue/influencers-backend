@@ -235,6 +235,40 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 
 
 
+# Caching & Distributed Throttle Store Configuration
+# Outside local development (DEBUG=False or REDIS_URL provided), share
+# cache counters across Celery workers and application servers using Redis.
+REDIS_CACHE_URL = os.environ.get('REDIS_URL') or os.environ.get('CACHE_URL')
+if REDIS_CACHE_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_CACHE_URL,
+            'KEY_PREFIX': 'creator_saas_cache',
+            'TIMEOUT': 300,
+        }
+    }
+elif not DEBUG:
+    # Outside local development, route to shared Redis instance
+    redis_broker = os.environ.get('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/1')
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': redis_broker,
+            'KEY_PREFIX': 'creator_saas_cache',
+            'TIMEOUT': 300,
+        }
+    }
+else:
+    # Local development in-memory cache
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'creator-saas-local-cache',
+            'TIMEOUT': 300,
+        }
+    }
+
 # REST Framework Settings
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -243,6 +277,16 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '30/minute',
+        'user': '120/minute',
+        'auth': '5/minute',
+        'inquiry': '10/minute',
+    },
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     'DEFAULT_FILTER_BACKENDS': (
