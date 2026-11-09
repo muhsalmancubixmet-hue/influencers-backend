@@ -34,9 +34,11 @@ if not SECRET_KEY:
 # Debug mode flag (enables verbose tracebacks in dev)
 DEBUG = os.environ.get('DEBUG', 'True').lower() in ('true', '1', 'yes')
 
-# Permitted host headers
-raw_allowed = os.environ.get('ALLOWED_HOSTS', '*')
-ALLOWED_HOSTS = [h.strip() for h in raw_allowed.split(',') if h.strip()] if raw_allowed != '*' else ['*']
+# Permitted host headers loaded from environment (wildcard '*' explicitly prohibited)
+raw_allowed = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+ALLOWED_HOSTS = [h.strip() for h in raw_allowed.split(',') if h.strip() and h.strip() != '*']
+if not ALLOWED_HOSTS:
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 
 
 # Application definition
@@ -205,10 +207,10 @@ CELERY_TIMEZONE = 'UTC'
 # Custom User Model
 AUTH_USER_MODEL = 'accounts.User'
 
-# Multi-Frontend CORS Configuration
+# Multi-Frontend CORS Configuration: Strict origin whitelist without wildcard bypass
 _cors_env = os.environ.get('CORS_ALLOWED_ORIGINS', '')
 CORS_ALLOWED_ORIGINS = [
-    origin.strip() for origin in _cors_env.split(',') if origin.strip()
+    origin.strip() for origin in _cors_env.split(',') if origin.strip() and origin.strip() != '*'
 ] if _cors_env else [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -218,9 +220,11 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8081",
     "http://localhost:8082",
     "http://127.0.0.1:8082",
+    "http://localhost:8083",
+    "http://127.0.0.1:8083",
 ]
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = False
 
 # Whitelisted HTTP headers permitted in cross-origin preflight requests
 from corsheaders.defaults import default_headers
