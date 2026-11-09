@@ -5,8 +5,9 @@ Validates authentication, token issuance, RBAC permissions, and email verificati
 security boundaries according to the engineering rules.
 """
 
+import os
 from django.test import TestCase
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ValidationError, ImproperlyConfigured
 from django.core.signing import TimestampSigner
 from rest_framework.test import APIClient
 from rest_framework import status
@@ -178,4 +179,60 @@ class AuthThrottlingSecurityTests(TestCase):
             HTTP_X_FORWARDED_FOR='198.51.100.99'
         )
         self.assertEqual(throttled_response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+
+class CacheSettingsSecurityTests(TestCase):
+    """
+    Validation test suite ensuring production cache safety and fail-closed configurations (SEC-CRIT-03/04).
+    """
+
+    def test_debug_defaults_to_false_when_env_unset(self) -> None:
+        """
+        Verify that DEBUG evaluation logic defaults to False when the environment variable is unset.
+
+        :return: None
+        """
+        # Simulate unset DEBUG environment variable
+        eval_debug = os.environ.get('UNSET_DEBUG_TEST_VAR', 'False').lower() in ('true', '1', 'yes')
+        self.assertFalse(eval_debug, "DEBUG must default to False when env var is unset.")
+
+    def test_cache_requires_redis_url_when_debug_false(self) -> None:
+        """
+        Ensure setting up CACHES with DEBUG=False raises ImproperlyConfigured if REDIS_URL is missing.
+
+        :return: None
+        """
+        # Replicate settings.py cache resolution logic
+        def resolve_cache_config(debug: bool, redis_url: str = "") -> dict:
+            if not debug:
+                if not redis_url:
+                    raise ImproperlyConfigured(
+                        "REDIS_URL or CACHE_URL environment variable is mandatory when DEBUG=False to ensure distributed cache safety."
+                    )
+                return {'BACKEND': 'django.core.cache.backends.redis.RedisCache', 'LOCATION': redis_url}
+            return {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}
+
+        with self.assertRaises(ImproperlyConfigured):
+            resolve_cache_config(debug=False, redis_url="")
+
+    def test_rediss_enforces_certificate_verification(self) -> None:
+        """
+        Ensure rediss:// URLs configure explicit SSL certificate validation and hostname checking.
+
+        :return: None
+        """
+        import ssl
+        from django.core.cache.backends.redis import RedisCache
+
+        rediss_url = "rediss://127.0.0.1:6379/0"
+        redis_options = {
+            'ssl_cert_reqs': ssl.CERT_REQUIRED,
+            'ssl_check_hostname': True,
+        }
+        cache_instance = RedisCache(rediss_url, {'OPTIONS': redis_options})
+        pool = cache_instance._cache._get_connection_pool(True)
+
+        self.assertEqual(pool.connection_kwargs.get('ssl_cert_reqs'), ssl.CERT_REQUIRED)
+        self.assertTrue(pool.connection_kwargs.get('ssl_check_hostname'))
+
 

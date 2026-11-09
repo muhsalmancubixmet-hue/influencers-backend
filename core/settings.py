@@ -31,8 +31,8 @@ if not SECRET_KEY:
     from django.core.exceptions import ImproperlyConfigured
     raise ImproperlyConfigured("SECRET_KEY environment variable is mandatory and cannot be empty.")
 
-# Debug mode flag (enables verbose tracebacks in dev)
-DEBUG = os.environ.get('DEBUG', 'True').lower() in ('true', '1', 'yes')
+# Debug mode flag (enables verbose tracebacks in dev; defaults to False when unset)
+DEBUG = os.environ.get('DEBUG', 'False').lower() in ('true', '1', 'yes')
 
 # Permitted host headers loaded from environment (wildcard '*' explicitly prohibited)
 raw_allowed = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1')
@@ -236,38 +236,58 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 
 
 # Caching & Distributed Throttle Store Configuration
-# Outside local development (DEBUG=False or REDIS_URL provided), share
-# cache counters across Celery workers and application servers using Redis.
+# Outside local development (DEBUG=False), RedisCache is strictly required to share
+# throttle counters and cache entries across workers. If REDIS_URL/CACHE_URL is unset,
+# raise ImproperlyConfigured immediately instead of silently falling back.
 REDIS_CACHE_URL = os.environ.get('REDIS_URL') or os.environ.get('CACHE_URL')
-if REDIS_CACHE_URL:
+
+if not DEBUG:
+    if not REDIS_CACHE_URL:
+        from django.core.exceptions import ImproperlyConfigured
+        raise ImproperlyConfigured(
+            "REDIS_URL or CACHE_URL environment variable is mandatory when DEBUG=False to ensure distributed cache safety."
+        )
+
+    redis_options = {}
+    if REDIS_CACHE_URL.startswith('rediss://'):
+        import ssl
+        redis_options['ssl_cert_reqs'] = ssl.CERT_REQUIRED
+        redis_options['ssl_check_hostname'] = True
+
     CACHES = {
         'default': {
             'BACKEND': 'django.core.cache.backends.redis.RedisCache',
             'LOCATION': REDIS_CACHE_URL,
             'KEY_PREFIX': 'creator_saas_cache',
             'TIMEOUT': 300,
-        }
-    }
-elif not DEBUG:
-    # Outside local development, route to shared Redis instance
-    redis_broker = os.environ.get('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/1')
-    CACHES = {
-        'default': {
-            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-            'LOCATION': redis_broker,
-            'KEY_PREFIX': 'creator_saas_cache',
-            'TIMEOUT': 300,
+            'OPTIONS': redis_options,
         }
     }
 else:
-    # Local development in-memory cache
-    CACHES = {
-        'default': {
-            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-            'LOCATION': 'creator-saas-local-cache',
-            'TIMEOUT': 300,
+    # In local development (DEBUG=True), use RedisCache if REDIS_URL is provided, else fallback to LocMemCache
+    if REDIS_CACHE_URL:
+        redis_options = {}
+        if REDIS_CACHE_URL.startswith('rediss://'):
+            import ssl
+            redis_options['ssl_cert_reqs'] = ssl.CERT_REQUIRED
+            redis_options['ssl_check_hostname'] = True
+        CACHES = {
+            'default': {
+                'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+                'LOCATION': REDIS_CACHE_URL,
+                'KEY_PREFIX': 'creator_saas_cache',
+                'TIMEOUT': 300,
+                'OPTIONS': redis_options,
+            }
         }
-    }
+    else:
+        CACHES = {
+            'default': {
+                'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+                'LOCATION': 'creator-saas-local-cache',
+                'TIMEOUT': 300,
+            }
+        }
 
 # Number of reverse proxies in front of application (0 = trust REMOTE_ADDR directly, >0 = count of trusted upstream proxies)
 _raw_num_proxies = os.environ.get('NUM_PROXIES', '0').strip()
