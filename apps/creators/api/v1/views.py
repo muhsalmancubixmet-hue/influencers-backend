@@ -471,6 +471,26 @@ class CreatorMediaUploadView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+        # Step 6: Magic byte validation for PDF documents (must start with %PDF-)
+        if ext == '.pdf':
+            header = uploaded_file.read(5)
+            uploaded_file.seek(0)
+            if not header.startswith(b'%PDF-'):
+                return Response(
+                    {'detail': 'Invalid or corrupted PDF document.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # Step 7: Magic byte validation for MP4 videos (must contain 'ftyp' in first 12 bytes)
+        if ext == '.mp4':
+            header = uploaded_file.read(12)
+            uploaded_file.seek(0)
+            if b'ftyp' not in header:
+                return Response(
+                    {'detail': 'Invalid or corrupted MP4 video file.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
         file_type_param = request.data.get('file_type', 'IMAGE').upper()
         # Map param to MediaType choice
         type_mapping = {

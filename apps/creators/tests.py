@@ -213,3 +213,70 @@ class CreatorMediaUploadSecurityTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['file_name'], 'media_kit.pdf')
+
+    def test_fake_pdf_rejected_by_magic_bytes(self) -> None:
+        """
+        Ensure document with .pdf extension but missing '%PDF-' magic bytes is rejected.
+
+        :return: None
+        """
+        self.client.force_authenticate(user=self.creator_user)
+        fake_pdf = SimpleUploadedFile(
+            name='fake_document.pdf',
+            content=b'NOT A REAL PDF FILE HEADER',
+            content_type='application/pdf'
+        )
+
+        response = self.client.post(
+            self.upload_url,
+            {'file': fake_pdf, 'file_type': 'DOCUMENT'},
+            format='multipart'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid or corrupted PDF document', response.data.get('detail', ''))
+
+    def test_fake_mp4_rejected_by_magic_bytes(self) -> None:
+        """
+        Ensure video with .mp4 extension but missing 'ftyp' box in first 12 bytes is rejected.
+
+        :return: None
+        """
+        self.client.force_authenticate(user=self.creator_user)
+        fake_mp4 = SimpleUploadedFile(
+            name='fake_video.mp4',
+            content=b'NOT AN MP4 VIDEO AT ALL',
+            content_type='video/mp4'
+        )
+
+        response = self.client.post(
+            self.upload_url,
+            {'file': fake_mp4, 'file_type': 'VIDEO'},
+            format='multipart'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid or corrupted MP4 video file', response.data.get('detail', ''))
+
+    def test_valid_mp4_video_upload_success(self) -> None:
+        """
+        Ensure authentic MP4 video file with valid 'ftyp' header is accepted.
+
+        :return: None
+        """
+        self.client.force_authenticate(user=self.creator_user)
+        valid_mp4 = SimpleUploadedFile(
+            name='promo.mp4',
+            content=b'\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00video payload',
+            content_type='video/mp4'
+        )
+
+        response = self.client.post(
+            self.upload_url,
+            {'file': valid_mp4, 'file_type': 'VIDEO'},
+            format='multipart'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['file_name'], 'promo.mp4')
+
