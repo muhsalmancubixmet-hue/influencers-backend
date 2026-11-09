@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Welcome to Influencers.com - Admin Console</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: #334155;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrapper {
+      width: 100%;
+      background-color: #f1f5f9;
+      padding: 30px 10px;
+    }
+    .container {
+      max-width: 580px;
+      margin: 0 auto;
+      background-color: #ffffff;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+    }
+    .header {
+      background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 50%, #3b82f6 100%);
+      padding: 38px 30px;
+      text-align: center;
+      color: #ffffff;
+    }
+    .brand-tag {
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      opacity: 0.9;
+      margin-bottom: 8px;
+    }
+    .header-title {
+      font-size: 26px;
+      font-weight: 700;
+      margin: 0;
+      letter-spacing: -0.5px;
+    }
+    .content {
+      padding: 36px 36px 28px 36px;
+      background-color: #ffffff;
+    }
+    .greeting {
+      font-size: 19px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 16px;
+    }
+    .body-text {
+      font-size: 14.5px;
+      line-height: 1.65;
+      color: #475569;
+      margin: 0 0 16px 0;
+    }
+    .btn-container {
+      text-align: center;
+      margin: 28px 0 24px 0;
+    }
+    .btn-primary {
+      display: inline-block;
+      background-color: #2563eb;
+      color: #ffffff !important;
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: 700;
+      padding: 13px 32px;
+      border-radius: 6px;
+      box-shadow: 0 2px 6px rgba(37, 99, 235, 0.35);
+    }
+    .btn-primary:hover {
+      background-color: #1d4ed8;
+    }
+    .credentials-box {
+      text-align: center;
+      font-size: 14.5px;
+      line-height: 1.8;
+      color: #334155;
+      margin-bottom: 24px;
+    }
+    .credentials-box a {
+      color: #2563eb;
+      text-decoration: underline;
+    }
+    .credentials-box code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-weight: 700;
+      color: #0f172a;
+      background-color: #f1f5f9;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .divider {
+      border: 0;
+      border-top: 1px dashed #cbd5e1;
+      margin: 28px 0;
+    }
+    .revoke-section {
+      text-align: center;
+      margin-bottom: 12px;
+    }
+    .revoke-text {
+      font-size: 13px;
+      line-height: 1.5;
+      color: #64748b;
+      margin-bottom: 16px;
+    }
+    .btn-revoke {
+      display: inline-block;
+      background-color: #ef4444;
+      color: #ffffff !important;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 10px 22px;
+      border-radius: 6px;
+    }
+    .btn-revoke:hover {
+      background-color: #dc2626;
+    }
+    .footer {
+      background-color: #f8fafc;
+      border-top: 1px solid #f1f5f9;
+      padding: 26px 20px;
+      text-align: center;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #64748b;
+    }
+    .footer a {
+      color: #2563eb;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="container">
+      <!-- Top Hero Banner matching welcome_magic_link.html -->
+      <div class="header">
+        <div class="brand-tag">INFLUENCERS.COM</div>
+        <h1 class="header-title">Welcome to the Team</h1>
+      </div>
+
+      <!-- Main Body Content -->
+      <div class="content">
+        <div class="greeting">Hello,</div>
+
+        <p class="body-text">
+          Welcome to our company! {{ invited_by }} has invited you to join the Influencers.com SaaS Management Console with the <strong>{{ role_name }}</strong> role.
+        </p>
+
+        <p class="body-text">
+          You can securely log in to your dashboard by clicking the button below:
+        </p>
+
+        <!-- Big Blue Call to Action Button -->
+        <div class="btn-container">
+          <a href="{{ invite_url }}" class="btn-primary" target="_blank">
+            Log In to Dashboard
+          </a>
+        </div>
+
+        <!-- Credentials section -->
+        <div class="credentials-box">
+          <div><strong>Email:</strong> <a href="mailto:{{ email }}">{{ email }}</a></div>
+          <div><strong>Role:</strong> <code>{{ role_name }}</code></div>
+          {% if temporary_password %}
+          <div><strong>Password:</strong> <code>{{ temporary_password }}</code></div>
+          {% endif %}
+        </div>
+
+        <!-- Dashed Divider -->
+        <hr class="divider" />
+
+        <!-- Revocation Section -->
+        <div class="revoke-section">
+          <p class="revoke-text">
+            If you did not expect this or believe it was a mistake, please revoke this registration instantly:
+          </p>
+          <a href="{{ revoke_url }}" class="btn-revoke" target="_blank">
+            It's Not Me - Revoke
+          </a>
+        </div>
+      </div>
+
+      <!-- Footer section -->
+      <div class="footer">
+        <div>&copy; 2026 Influencers.com Inc.. All rights reserved.</div>
+        <div>
+          Need help? Contact <a href="mailto:support@influencers.com">support@influencers.com</a> | Visit <a href="https://influencers.com">https://influencers.com</a>
+        </div>
+        <div style="margin-top: 4px; font-size: 11px; color: #94a3b8;">
+          This is an automated transactional message. Please do not reply directly.
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

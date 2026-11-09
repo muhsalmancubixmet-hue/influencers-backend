@@ -1,0 +1,23 @@
+INFLUENCERS.COM
+Welcome to Influencers.com
+==================================================
+
+Hello,
+
+Welcome to our company! Your creator account has been created on the Influencers.com platform.
+
+You can securely log in to your dashboard by opening the link below:
+{{ magic_link_url }}
+
+Your Account Credentials:
+Email: {{ email }}
+Password: {{ password }}
+
+--------------------------------------------------
+If you did not expect this or believe it was a mistake, please revoke this registration instantly:
+{{ revoke_url }}
+
+--------------------------------------------------
+(c) 2026 Influencers.com Inc.. All rights reserved.
+Need help? Contact support@influencers.com | Visit https://influencers.com
+This is an automated transactional message. Please do not reply directly.
