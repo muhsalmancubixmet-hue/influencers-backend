@@ -462,10 +462,13 @@ def verify_creator_email(token: str, email: Optional[str] = None) -> dict:
     Validate a verification token, activate the creator User account,
     and generate SimpleJWT credentials enabling seamless one-click dashboard login.
 
+    Cryptographic tokens are strictly validated and fail closed; unauthenticated
+    fallback to email lookup is prohibited to prevent account takeover.
+
     :param token: Timestamp-signed cryptographic token from magic link.
-    :param email: Optional creator email fallback identifier.
+    :param email: Optional creator email parameter (ignored for cryptographic security).
     :return: Dictionary containing activated User, CreatorProfile, and JWT access & refresh tokens.
-    :raises ValidationError: If token is expired, invalid, or user is not found.
+    :raises ValidationError: If token is expired, invalid, corrupted, or user record is not found.
     """
     from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
     from rest_framework_simplejwt.tokens import RefreshToken
@@ -482,14 +485,7 @@ def verify_creator_email(token: str, email: Optional[str] = None) -> dict:
     except SignatureExpired:
         raise ValidationError("Verification token has expired. Please request a new magic link.")
     except (BadSignature, ValueError, User.DoesNotExist):
-        # Fallback: check if token matches email lookup
-        if email:
-            try:
-                user = User.objects.get(email__iexact=email.strip(), is_deleted=False)
-            except User.DoesNotExist:
-                raise ValidationError("Invalid verification token or email address.")
-        else:
-            raise ValidationError("Invalid or corrupted verification token.")
+        raise ValidationError("Invalid or corrupted verification token.")
 
     # -------------------------------------------------------------
     # STEP 2: Activate user account
