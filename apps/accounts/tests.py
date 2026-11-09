@@ -151,3 +151,31 @@ class AuthThrottlingSecurityTests(TestCase):
         }, format='json')
         self.assertEqual(throttled_response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
 
+    def test_rotating_x_forwarded_for_header_does_not_bypass_login_throttle(self) -> None:
+        """
+        Verify that rotating HTTP_X_FORWARDED_FOR headers does NOT bypass login throttling
+        when NUM_PROXIES is configured to 0. Throttling must identify clients by REMOTE_ADDR.
+
+        :return: None
+        """
+        url = '/api/v1/auth/token/'
+        # Step 1: Send 5 failed login attempts with varying spoofed X-Forwarded-For headers
+        for i in range(5):
+            spoofed_ip = f'198.51.100.{i + 1}'
+            response = self.client.post(
+                url,
+                {'email': 'target@example.com', 'password': f'WrongPass{i}!'},
+                format='json',
+                HTTP_X_FORWARDED_FOR=spoofed_ip
+            )
+            self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        # Step 2: 6th attempt with yet another spoofed IP must still be blocked by throttle (HTTP 429)
+        throttled_response = self.client.post(
+            url,
+            {'email': 'target@example.com', 'password': 'WrongPassFinal!'},
+            format='json',
+            HTTP_X_FORWARDED_FOR='198.51.100.99'
+        )
+        self.assertEqual(throttled_response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+

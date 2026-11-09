@@ -269,8 +269,16 @@ else:
         }
     }
 
+# Number of reverse proxies in front of application (0 = trust REMOTE_ADDR directly, >0 = count of trusted upstream proxies)
+_raw_num_proxies = os.environ.get('NUM_PROXIES', '0').strip()
+try:
+    NUM_PROXIES = int(_raw_num_proxies)
+except ValueError:
+    NUM_PROXIES = 0
+
 # REST Framework Settings
 REST_FRAMEWORK = {
+    'NUM_PROXIES': NUM_PROXIES,
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
