@@ -25,11 +25,11 @@ if _env_file.exists():
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
-# Cryptographic signing key loaded from environment with secure dev fallback
-SECRET_KEY = os.environ.get(
-    'SECRET_KEY',
-    'django-insecure-)3ao@2^rwz0#yx^y-o!!_*c^q-no^1r*z4d_%hwof0_0dzj1nn'
-)
+# Cryptographic signing key loaded from environment; mandatory, fails closed if missing
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured("SECRET_KEY environment variable is mandatory and cannot be empty.")
 
 # Debug mode flag (enables verbose tracebacks in dev)
 DEBUG = os.environ.get('DEBUG', 'True').lower() in ('true', '1', 'yes')

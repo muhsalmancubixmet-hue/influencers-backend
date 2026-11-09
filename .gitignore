@@ -1,0 +1,19 @@
+# Environment variables and secrets
+.env
+.env.*
+
+# Local SQLite databases
+*.sqlite3
+
+# User-uploaded media
+media/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
