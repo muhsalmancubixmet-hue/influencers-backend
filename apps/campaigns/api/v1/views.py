@@ -5,6 +5,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.throttling import ScopedRateThrottle
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 
 from apps.accounts.decorators import require_module_access
 from apps.accounts.models import ModuleChoice
@@ -25,6 +26,7 @@ from apps.campaigns.api.v1.serializers import (
     InquirySerializer,
     InquiryMessageSerializer,
     PublicCampaignListSerializer,
+    PublicCampaignDetailSerializer,
     PublicInquiryCreateSerializer
 )
 from apps.campaigns.api.v1.services import (
@@ -406,21 +408,91 @@ class PublicCampaignListView(APIView):
         ).filter(
             status__in=[CampaignStatus.PUBLISHED, CampaignStatus.APPLICATIONS, CampaignStatus.ACTIVE],
             is_deleted=False
-        ).order_by('-created_at')
+        )
 
+        # Keyword free-text query
+        q = request.query_params.get('q') or request.query_params.get('search')
+        if q:
+            search_term = str(q).strip()
+            campaigns = campaigns.filter(
+                Q(title__icontains=search_term) |
+                Q(objective__icontains=search_term) |
+                Q(business__company_name__icontains=search_term)
+            )
+
+        # Taxonomy category filter
         category = request.query_params.get('category')
         if category:
-            campaigns = campaigns.filter(category__name__iexact=category)
+            campaigns = campaigns.filter(
+                Q(category__name__iexact=category) |
+                Q(category__slug__iexact=category)
+            )
 
+        # Geographic location filter
         location = request.query_params.get('location')
         if location:
-            campaigns = campaigns.filter(location__name__iexact=location)
+            campaigns = campaigns.filter(
+                Q(location__name__icontains=location) |
+                Q(location__parent__name__icontains=location)
+            )
+
+        # Country filter
+        country = request.query_params.get('country')
+        if country and country != 'remote':
+            campaigns = campaigns.filter(
+                Q(location__country_code__iexact=country) |
+                Q(location__parent__country_code__iexact=country) |
+                Q(location__parent__name__iexact=country)
+            )
+
+        # Remote-only filter
+        remote = request.query_params.get('remote')
+        if remote in [True, 'true', '1'] or country == 'remote':
+            campaigns = campaigns.filter(location__isnull=True)
+
+        # Sorting heuristic
+        sort_key = request.query_params.get('sort', 'new')
+        if sort_key == 'budget':
+            campaigns = campaigns.order_by('-total_budget_cents', '-created_at')
+        else:
+            campaigns = campaigns.order_by('-created_at')
 
         paginator = PageNumberPagination()
         paginator.page_size = 20
         page = paginator.paginate_queryset(campaigns, request)
         serializer = PublicCampaignListSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
+
+
+class PublicCampaignDetailView(APIView):
+    """
+    Public endpoint providing complete specifications and brief details for a campaign.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk, *args, **kwargs):
+        """
+        Retrieve public brief for an active campaign.
+        
+        :param request: Public HTTP request.
+        :param pk: UUID identifier of campaign.
+        :return: Serialized campaign details or 404.
+        """
+        campaign = Campaign.objects.select_related(
+            'business', 'category', 'location'
+        ).filter(
+            id=pk,
+            status__in=[CampaignStatus.PUBLISHED, CampaignStatus.APPLICATIONS, CampaignStatus.ACTIVE],
+            is_deleted=False
+        ).first()
+        if not campaign:
+            return Response(
+                {'detail': f"Campaign '{pk}' not found or is closed."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = PublicCampaignDetailSerializer(campaign)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 
 class PublicInquiryCreateView(APIView):
@@ -443,7 +515,7 @@ class PublicInquiryCreateView(APIView):
         serializer.is_valid(raise_exception=True)
 
         try:
-            inquiry = create_public_inquiry(serializer.validated_data)
+            inquiry = create_public_inquiry(serializer.validated_data, request_user=request.user)
             return Response({
                 'id': str(inquiry.id),
                 'status': inquiry.status,

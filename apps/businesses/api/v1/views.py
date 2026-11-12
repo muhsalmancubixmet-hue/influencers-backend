@@ -210,7 +210,7 @@ class BusinessRegistrationView(APIView):
             first_name = contact_name.split()[0] if contact_name else username.title()
             last_name = " ".join(contact_name.split()[1:]) if len(contact_name.split()) > 1 else ""
 
-            user = User.objects.create(
+            user = User(
                 email=email,
                 username=username,
                 first_name=first_name,
@@ -218,6 +218,13 @@ class BusinessRegistrationView(APIView):
                 role=UserRole.BUSINESS,
                 is_active=True
             )
+            from django.contrib.auth.password_validation import validate_password
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            try:
+                validate_password(data['password'], user=user)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError({'password': list(exc.messages)})
+
             user.set_password(data['password'])
             user.save()
 
@@ -240,6 +247,29 @@ class BusinessRegistrationView(APIView):
                 request=request,
                 reason=f"Brand self-registered: {business.company_name}"
             )
+
+        # Dispatch branded welcome email via Celery task (REQ-NOTIF-03)
+        try:
+            from django.conf import settings
+            from apps.businesses.tasks import send_business_welcome_email_task
+            is_eager = getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False)
+            if is_eager:
+                send_business_welcome_email_task.apply(args=[
+                    str(user.id),
+                    user.email,
+                    business.company_name,
+                    contact_name
+                ])
+            else:
+                send_business_welcome_email_task.delay(
+                    str(user.id),
+                    user.email,
+                    business.company_name,
+                    contact_name
+                )
+        except Exception as mail_exc:
+            import logging
+            logging.getLogger(__name__).warning(f"Could not queue welcome email for {user.email}: {mail_exc}")
 
         refresh = RefreshToken.for_user(user)
         refresh['role'] = user.role
@@ -488,11 +518,13 @@ class BusinessCampaignListCreateView(APIView):
             total_budget_cents = 0
 
         # Step 5: Create campaign entity matching database schema
+        cover_image_url = str(request.data.get('cover_image_url') or request.data.get('image') or '').strip()
         campaign = Campaign.objects.create(
             business=request.user.business_profile,
             title=title,
             category=cat_obj,
             location=loc_obj,
+            cover_image_url=cover_image_url,
             total_budget_cents=total_budget_cents,
             currency=request.data.get('currency', 'INR'),
             objective=(request.data.get('brief') or request.data.get('objective', '')).strip(),
@@ -612,6 +644,84 @@ class BusinessCampaignDetailView(APIView):
             )
         except (Campaign.DoesNotExist, ValueError):
             return Response({'detail': "Campaign not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response(CampaignDetailSerializer(campaign).data, status=status.HTTP_200_OK)
+
+    def patch(self, request, pk, *args, **kwargs):
+        """
+        Update campaign specifications, brief, budget, slots, deadline, status or cover image.
+        """
+        if not hasattr(request.user, 'business_profile'):
+            return Response({'detail': "Business profile not found."}, status=status.HTTP_403_FORBIDDEN)
+
+        from apps.campaigns.models import Campaign, CampaignStatus
+        from apps.campaigns.api.v1.serializers import CampaignDetailSerializer
+        try:
+            campaign = Campaign.objects.get(
+                id=pk,
+                business=request.user.business_profile,
+                is_deleted=False
+            )
+        except (Campaign.DoesNotExist, ValueError):
+            return Response({'detail': "Campaign not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if 'title' in request.data:
+            val = str(request.data['title']).strip()
+            if val:
+                campaign.title = val
+
+        if 'brief' in request.data or 'objective' in request.data:
+            campaign.objective = str(request.data.get('brief') or request.data.get('objective', '')).strip()
+
+        if 'deliverables' in request.data or 'deliverables_spec' in request.data:
+            campaign.deliverables_spec = str(request.data.get('deliverables') or request.data.get('deliverables_spec', '')).strip()
+
+        if 'cover_image_url' in request.data:
+            campaign.cover_image_url = str(request.data['cover_image_url']).strip()
+
+        if 'category' in request.data:
+            cat_obj = _resolve_category(request.data['category'])
+            if cat_obj:
+                campaign.category = cat_obj
+
+        if 'location' in request.data or 'location_text' in request.data:
+            loc_val = request.data.get('location') or request.data.get('location_text')
+            loc_obj = _resolve_location(loc_val)
+            if loc_obj:
+                campaign.location = loc_obj
+            campaign.location_text = str(request.data.get('location_text') or (loc_obj.full_path if loc_obj else (loc_val or 'Worldwide'))).strip()
+
+        if 'budget' in request.data or 'total_budget_cents' in request.data:
+            raw_b = request.data.get('budget') or request.data.get('total_budget_cents', 0)
+            try:
+                campaign.total_budget_cents = int(float(raw_b) * 100)
+            except (ValueError, TypeError):
+                pass
+
+        if 'creators_needed' in request.data:
+            try:
+                campaign.creators_needed = int(request.data['creators_needed'])
+            except (ValueError, TypeError):
+                pass
+
+        if 'status' in request.data:
+            new_s = request.data['status']
+            if new_s in CampaignStatus.values:
+                campaign.status = new_s
+
+        if 'deadline' in request.data:
+            campaign.deadline = request.data['deadline'] or None
+
+        campaign.save()
+
+        record_audit_log(
+            admin=request.user,
+            action='UPDATE_CAMPAIGN',
+            entity='Campaign',
+            entity_id=str(campaign.id),
+            request=request,
+            reason=f"Brand updated campaign '{campaign.title}'"
+        )
 
         return Response(CampaignDetailSerializer(campaign).data, status=status.HTTP_200_OK)
 
@@ -737,6 +847,35 @@ class BusinessCampaignApplicationsView(APIView):
             request=request,
             reason=f"Brand {bp.company_name} marked creator application from {bid.creator.display_name} as {new_status}"
         )
+
+        # Wire automated notification trigger on bid decision (REQ-NOTIF-02)
+        try:
+            from apps.common.api.v1.services import create_user_notification
+            from apps.common.models import NotificationKind
+            if bid.creator and bid.creator.user:
+                if new_status == 'ACCEPTED':
+                    create_user_notification(
+                        recipient=bid.creator.user,
+                        title=f"Proposal Accepted: {campaign.title}",
+                        message=f"Your proposal for '{campaign.title}' has been accepted by {bp.company_name}.",
+                        kind=NotificationKind.CAMPAIGN
+                    )
+                elif new_status == 'REJECTED':
+                    create_user_notification(
+                        recipient=bid.creator.user,
+                        title=f"Proposal Update: {campaign.title}",
+                        message=f"Your proposal for '{campaign.title}' was not selected.",
+                        kind=NotificationKind.CAMPAIGN
+                    )
+                elif new_status == 'SHORTLISTED':
+                    create_user_notification(
+                        recipient=bid.creator.user,
+                        title=f"Proposal Shortlisted: {campaign.title}",
+                        message=f"Your proposal for '{campaign.title}' has been shortlisted by {bp.company_name}.",
+                        kind=NotificationKind.CAMPAIGN
+                    )
+        except Exception:
+            pass
 
         res_data = CampaignBidSerializer(bid).data
         res_data['inquiry_id'] = inquiry_id
@@ -876,6 +1015,31 @@ class BusinessInquiryMessagesView(APIView):
         )
 
         return Response(InquiryMessageSerializer(msg).data, status=status.HTTP_201_CREATED)
+
+
+class BusinessInquiriesUnreadCountView(APIView):
+    """
+    Return total unread incoming messages count across all active inquiries for the business.
+    Used by Brand Suite navigation shell for real-time unread badges.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        """
+        Aggregate count of unread messages from creators across all brand inquiry threads.
+        """
+        if not hasattr(request.user, 'business_profile'):
+            return Response({'unread_count': 0}, status=status.HTTP_200_OK)
+
+        from apps.campaigns.models import InquiryMessage
+
+        unread_count = InquiryMessage.objects.filter(
+            inquiry__business=request.user.business_profile,
+            inquiry__is_deleted=False,
+            is_read=False
+        ).exclude(sender=request.user).count()
+
+        return Response({'unread_count': unread_count}, status=status.HTTP_200_OK)
 
 
 class BusinessDashboardStatsView(APIView):
@@ -1437,5 +1601,84 @@ class BusinessAnalyticsView(APIView):
             "campaign_performance": campaign_performance,
             "category_distribution": category_distribution
         }, status=status.HTTP_200_OK)
+
+
+class BusinessMediaUploadView(APIView):
+    """
+    Multipart upload endpoint for brand campaign covers, logos, and creative assets.
+    """
+    permission_classes = [IsAuthenticated]
+
+    MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB maximum upload limit
+    ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
+    BLOCKED_EXTENSIONS = {'.svg', '.html', '.htm', '.xhtml', '.js', '.exe', '.sh', '.bat', '.php'}
+
+    def post(self, request, *args, **kwargs):
+        import os
+        import uuid
+        from django.core.files.storage import default_storage
+        from PIL import Image
+        from apps.common.models import MediaAsset, MediaType
+
+        if not hasattr(request.user, 'business_profile'):
+            return Response({'detail': 'Business profile required.'}, status=status.HTTP_403_FORBIDDEN)
+
+        business = request.user.business_profile
+        uploaded_file = request.FILES.get('file')
+        if not uploaded_file:
+            return Response({'detail': "No file provided in 'file' field."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if uploaded_file.size > self.MAX_UPLOAD_SIZE_BYTES:
+            return Response(
+                {'detail': 'File size exceeds maximum allowed limit of 10MB.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        ext = os.path.splitext(uploaded_file.name)[1].lower()
+        if ext in self.BLOCKED_EXTENSIONS or ext not in self.ALLOWED_EXTENSIONS:
+            return Response(
+                {'detail': f'File type "{ext}" is not permitted. Upload JPG, PNG, or WEBP.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            img = Image.open(uploaded_file)
+            img.verify()
+            uploaded_file.seek(0)
+        except Exception:
+            return Response(
+                {'detail': 'Invalid or corrupted image file.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        file_type_param = str(request.data.get('file_type', 'COVER')).upper()
+        asset_type = MediaType.AVATAR if file_type_param == 'LOGO' else MediaType.COVER
+
+        unique_name = f"businesses/{business.id}/{uuid.uuid4().hex}{ext}"
+        saved_path = default_storage.save(unique_name, uploaded_file)
+        relative_url = default_storage.url(saved_path)
+        full_url = request.build_absolute_uri(relative_url)
+
+        media_asset = MediaAsset.objects.create(
+            uploader=request.user,
+            file_name=uploaded_file.name,
+            file_type=asset_type,
+            file_size_bytes=uploaded_file.size,
+            cdn_url=full_url,
+            mime_type=uploaded_file.content_type or 'image/jpeg'
+        )
+
+        if file_type_param == 'LOGO':
+            business.logo_url = full_url
+            business.save(update_fields=['logo_url'])
+
+        return Response({
+            'id': str(media_asset.id),
+            'url': full_url,
+            'file_name': media_asset.file_name,
+            'file_type': media_asset.file_type,
+            'file_size_bytes': media_asset.file_size_bytes
+        }, status=status.HTTP_201_CREATED)
+
 
 

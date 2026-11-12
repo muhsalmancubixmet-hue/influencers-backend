@@ -3,6 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
+from django.db.models import Count, Q
 
 from apps.accounts.decorators import require_module_access
 from apps.accounts.models import ModuleChoice
@@ -24,12 +25,21 @@ class PublicCategoryListView(APIView):
 
     def get(self, request, *args, **kwargs):
         """
-        List active categories ordered by display order and name.
+        List active categories ordered by display order and name, annotated with active creator count.
         
         :param request: HTTP request.
-        :return: JSON list of active categories.
+        :return: JSON list of active categories with creator metrics.
         """
-        categories = Category.objects.filter(is_active=True, is_deleted=False).order_by('order', 'name')
+        categories = Category.objects.filter(
+            is_active=True,
+            is_deleted=False
+        ).annotate(
+            creator_count=Count(
+                'creator_links',
+                filter=Q(creator_links__creator__status='ACTIVE', creator_links__creator__is_deleted=False),
+                distinct=True
+            )
+        ).order_by('order', 'name')
         serializer = CategorySerializer(categories, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 

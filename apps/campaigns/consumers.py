@@ -35,10 +35,10 @@ def verify_inquiry_access(inquiry_id: str, user):
     sender_name = user.get_full_name() or user.email
     sender_avatar = ""
 
-    if hasattr(user, 'influencer_profile') and inquiry.creator_id == user.influencer_profile.id:
+    if hasattr(user, 'creator_profile') and inquiry.creator_id == user.creator_profile.id:
         is_creator = True
-        sender_name = user.influencer_profile.display_name or sender_name
-        sender_avatar = user.influencer_profile.profile_photo_url or ""
+        sender_name = user.creator_profile.display_name or sender_name
+        sender_avatar = user.creator_profile.photo_url or ""
     elif hasattr(user, 'business_profile') and inquiry.business_id == user.business_profile.id:
         is_business = True
         sender_name = user.business_profile.company_name or sender_name
@@ -85,14 +85,33 @@ def persist_inquiry_message(inquiry_id: str, user, body: str, attachment_url: st
     sender_name = user.get_full_name() or user.email
     sender_avatar = ""
 
-    if hasattr(user, 'influencer_profile') and inquiry.creator_id == user.influencer_profile.id:
+    if hasattr(user, 'creator_profile') and inquiry.creator_id == user.creator_profile.id:
         sender_role = 'creator'
-        sender_name = user.influencer_profile.display_name or sender_name
-        sender_avatar = user.influencer_profile.profile_photo_url or ""
+        sender_name = user.creator_profile.display_name or sender_name
+        sender_avatar = user.creator_profile.photo_url or ""
     elif hasattr(user, 'business_profile') and inquiry.business_id == user.business_profile.id:
         sender_role = 'business'
         sender_name = user.business_profile.company_name or sender_name
         sender_avatar = user.business_profile.logo_url or ""
+
+    # Wire automated notification trigger on chat message (REQ-NOTIF-02)
+    try:
+        from apps.common.api.v1.services import create_user_notification
+        from apps.common.models import NotificationKind
+        target_user = (
+            inquiry.business.user
+            if (inquiry.creator and user == inquiry.creator.user)
+            else (inquiry.creator.user if inquiry.creator else None)
+        )
+        if target_user and target_user != user:
+            create_user_notification(
+                recipient=target_user,
+                title=f"New Chat Message: {inquiry.subject}",
+                message=f"You received a message from {sender_name}.",
+                kind=NotificationKind.USER
+            )
+    except Exception:
+        pass
 
     return {
         'id': str(msg.id),
@@ -144,6 +163,11 @@ class InquiryChatConsumer(AsyncJsonWebsocketConsumer):
         self.inquiry_id = self.scope['url_route']['kwargs'].get('inquiry_id')
         self.user = self.scope.get('user')
 
+        # 0. Reject disallowed origin
+        if self.scope.get('origin_rejected'):
+            await self.close(code=4403)
+            return
+
         # 1. Reject unauthenticated anonymous connections
         if not self.user or not self.user.is_authenticated:
             await self.close(code=4401)
@@ -164,9 +188,14 @@ class InquiryChatConsumer(AsyncJsonWebsocketConsumer):
             self.channel_name
         )
 
-        await self.accept()
+        # 4. Accept handshake with selected subprotocol (bearer) or default (never raw token)
+        subprotocol = self.scope.get('subprotocol')
+        if subprotocol:
+            await self.accept(subprotocol=subprotocol)
+        else:
+            await self.accept()
 
-        # 4. Notify connecting client of active real-time session
+        # 5. Notify connecting client of active real-time session
         await self.send_json({
             'type': 'connection_established',
             'inquiry_id': str(self.inquiry_id),

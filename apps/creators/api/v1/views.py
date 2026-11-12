@@ -26,7 +26,8 @@ from apps.creators.api.v1.serializers import (
     SocialAccountSerializer,
     SocialAccountConnectSerializer,
     PublicCreatorListSerializer,
-    PublicCreatorDetailSerializer
+    PublicCreatorDetailSerializer,
+    PublicMediaKitRequestSerializer
 )
 from apps.common.api.v1.serializers import (
     SocialPlatformSerializer,
@@ -39,7 +40,9 @@ from apps.creators.api.v1.services import (
     connect_social_account,
     disconnect_social_account,
     get_public_creators,
-    get_public_creator_detail
+    get_public_creator_detail,
+    request_creator_media_kit,
+    get_creator_analytics_summary
 )
 from apps.common.api.v1.services import (
     record_audit_log,
@@ -727,5 +730,53 @@ class PublicCreatorDetailView(APIView):
             )
         serializer = PublicCreatorDetailSerializer(creator)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class PublicMediaKitRequestView(APIView):
+    """
+    Public media kit request dispatch endpoint.
+    Allows interested business clients and agencies to request media kit documents.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, slug, *args, **kwargs):
+        """
+        Validate inquiry and process media kit download / dispatch.
+        
+        :param request: Public HTTP request containing requester_name, requester_email, etc.
+        :param slug: Target creator handle or slug identifier.
+        :return: JSON confirmation or validation error.
+        """
+        serializer = PublicMediaKitRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            result = request_creator_media_kit(slug, serializer.validated_data)
+            return Response(result, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CreatorAnalyticsView(APIView):
+    """
+    Live aggregated workspace analytics endpoint for the authenticated creator tenant.
+    Strictly isolated to request.user.creator_profile.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        """
+        Retrieve live performance statistics, inquiry funnel metrics, and chart series.
+
+        :param request: Authenticated HTTP request scoped to creator tenant.
+        :return: JSON analytics summary dictionary.
+        """
+        profile = get_creator_profile_or_403(request.user)
+        if not profile:
+            return Response({'detail': 'Creator profile required.'}, status=status.HTTP_403_FORBIDDEN)
+
+        data = get_creator_analytics_summary(profile)
+        return Response(data, status=status.HTTP_200_OK)
+
 
 

@@ -1,11 +1,13 @@
 import uuid
 from typing import Optional
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
-from apps.accounts.models import User
-from apps.creators.models import CreatorProfile
+from apps.accounts.models import User, UserRole
+from apps.creators.models import CreatorProfile, ProfileStatus, CreatorService
+from apps.businesses.models import BusinessProfile
 from apps.campaigns.models import (
     Campaign,
     CampaignBid,
@@ -53,11 +55,29 @@ def apply_to_campaign(
             campaign=campaign,
             creator=creator,
             proposed_fee_cents=proposed_fee_cents,
-            pitch_text=pitch_text
+            pitch=pitch_text
         )
 
-        campaign.applications_count += 1
-        campaign.save(update_fields=['applications_count', 'updated_at'])
+        # Atomic database-level increment to prevent lost updates under concurrency (REQ-SEC-04)
+        Campaign.objects.filter(id=campaign.id).update(
+            applications_count=F('applications_count') + 1,
+            updated_at=timezone.now()
+        )
+        campaign.refresh_from_db(fields=['applications_count', 'updated_at'])
+
+    # Wire automated notification trigger on new bid (REQ-NOTIF-02)
+    try:
+        from apps.common.api.v1.services import create_user_notification
+        from apps.common.models import NotificationKind
+        if campaign.business and campaign.business.user:
+            create_user_notification(
+                recipient=campaign.business.user,
+                title=f"New Proposal for {campaign.title}",
+                message=f"Creator @{creator.handle} submitted a collaboration proposal.",
+                kind=NotificationKind.CAMPAIGN
+            )
+    except Exception:
+        pass
 
     return bid
 
@@ -95,6 +115,26 @@ def send_inquiry_reply(
             inquiry.save(update_fields=['budget_cents', 'updated_at'])
         else:
             inquiry.save(update_fields=['updated_at'])
+
+    # Wire automated notification trigger on inquiry message reply (REQ-NOTIF-02)
+    try:
+        from apps.common.api.v1.services import create_user_notification
+        from apps.common.models import NotificationKind
+        target_recipient = (
+            inquiry.business.user
+            if (inquiry.creator and sender == inquiry.creator.user)
+            else (inquiry.creator.user if inquiry.creator else None)
+        )
+        sender_label = sender.get_full_name() or sender.username
+        if target_recipient and target_recipient != sender:
+            create_user_notification(
+                recipient=target_recipient,
+                title=f"New Message: {inquiry.subject}",
+                message=f"You received a new message from {sender_label}.",
+                kind=NotificationKind.USER
+            )
+    except Exception:
+        pass
 
     return message
 
@@ -176,45 +216,96 @@ def moderate_requirement(
     return req
 
 
-def create_public_inquiry(validated_data: dict) -> Inquiry:
+def create_public_inquiry(validated_data: dict, request_user: Optional[User] = None) -> Inquiry:
     """
-    Process and record a public collaboration inquiry from an external client/brand.
-    
-    Provisions a guest or established Business account dynamically to satisfy
-    relational tenancy boundaries, then registers the Inquiry thread and first message.
-    
-    :param validated_data: Sanitized dictionary containing creator_handle, client_email,
-                           client_name, company_name, subject, message, and budget.
-    :return: Newly created Inquiry model instance.
-    :raises ValidationError: If the target creator cannot be found or is inactive.
-    """
-    from apps.accounts.models import User, UserRole
-    from apps.businesses.models import BusinessProfile
+    Process and record a public collaboration inquiry from an external client or brand.
 
-    # Step 1: Resolve target creator profile (by UUID or handle)
-    raw_ident = validated_data['creator_handle'].strip().lstrip('@')
+    Provisions a guest or established Business account dynamically to satisfy
+    relational tenancy boundaries, links requested service package details if provided,
+    and registers the initial Inquiry thread and opening message.
+
+    :param validated_data: Sanitized dictionary containing:
+                           - 'creator_handle': Target creator handle, display name slug, or UUID.
+                           - 'client_email': Contact email address of the inquiring client/brand.
+                           - 'client_name': Name of the brand representative.
+                           - 'company_name': Optional trade or organization name.
+                           - 'client_phone': Optional telephone contact number.
+                           - 'subject': Campaign or proposal headline.
+                           - 'message': Detailed deliverables brief or collaboration proposal.
+                           - 'budget': Optional indicated compensation amount in major units.
+                           - 'currency': Three-letter ISO 4217 currency code (default: 'INR').
+                           - 'service_id': Optional package identifier or name from creator rate card.
+    :param request_user: Optional authenticated User instance from the HTTP request.
+    :return: Newly created Inquiry model instance.
+    :raises ValidationError: If target creator cannot be found, is inactive, if client
+                            email belongs to an active creator or admin account, or if
+                            an unauthenticated caller attempts to use a registered password account.
+    """
     from django.db.models import Q
-    lookup = Q(handle__iexact=raw_ident.lower())
+
+    # Step 1: Resolve target creator profile with active status check and flexible identifier matching
+    raw_ident = validated_data['creator_handle'].strip().lstrip('@')
+    lookup = (
+        Q(handle__iexact=raw_ident.lower()) |
+        Q(display_name__iexact=raw_ident) |
+        Q(display_name__iexact=raw_ident.replace('-', ' '))
+    )
     try:
         parsed_uuid = uuid.UUID(raw_ident)
         lookup |= Q(id=parsed_uuid)
     except (ValueError, AttributeError):
         pass
 
-    creator = CreatorProfile.objects.filter(lookup, is_deleted=False).first()
+    creator = CreatorProfile.objects.filter(
+        lookup,
+        status=ProfileStatus.ACTIVE,
+        is_deleted=False
+    ).first()
     if not creator:
-        raise ValidationError(f"Creator '{raw_ident}' not found.")
+        raise ValidationError(f"Creator '{raw_ident}' not found or is currently unavailable for collaborations.")
 
-    # Step 2: Resolve or provision originating client User and BusinessProfile
+    # Step 2: Resolve optional Creator Service package from rate card
+    service_package = None
+    raw_service_id = validated_data.get('service_id')
+    if raw_service_id:
+        s_lookup = Q(creator=creator, is_active=True, is_deleted=False)
+        try:
+            s_uuid = uuid.UUID(str(raw_service_id).strip())
+            service_package = CreatorService.objects.filter(s_lookup, id=s_uuid).first()
+        except (ValueError, AttributeError):
+            service_package = CreatorService.objects.filter(s_lookup, name__iexact=str(raw_service_id).strip()).first()
+
+    # Step 3: Resolve or provision originating client User and BusinessProfile (Rule 5: No Auth Shortcuts & Tenant Boundaries)
     email = validated_data['client_email'].strip().lower()
     client_name = validated_data.get('client_name', '').strip()
     company_name = validated_data.get('company_name', '').strip() or client_name or "Client Brand"
+    client_phone = validated_data.get('client_phone', '').strip()
 
     with transaction.atomic():
-        user = User.objects.filter(email=email).first()
-        if not user:
+        # Anti-Account Hijacking (REQ-SEC-03): Guard against impersonating existing accounts
+        existing_user = User.objects.filter(email=email).first()
+        if existing_user:
+            if existing_user.role != UserRole.BUSINESS:
+                raise ValidationError(
+                    f"The email '{email}' is registered as an existing {existing_user.get_role_display()} account. "
+                    "Please sign in to your workspace or provide a dedicated business email."
+                )
+
+            # If the account has an established password, anonymous callers cannot impersonate it
+            if existing_user.has_usable_password():
+                if not request_user or not request_user.is_authenticated or request_user.email.lower() != email:
+                    raise ValidationError(
+                        "An account with this email address already exists. "
+                        "Please log in to your account to send collaboration inquiries."
+                    )
+            user = existing_user
+        else:
+            # Provision a new guest business identity
+            user_base = email.split('@')[0]
+            unique_suffix = str(uuid.uuid4())[:6]
+            username = f"{user_base}_{unique_suffix}" if User.objects.filter(username=user_base).exists() else user_base
             user = User.objects.create(
-                username=email.split('@')[0] + "_" + str(uuid.uuid4())[:6] if User.objects.filter(username=email.split('@')[0]).exists() else email.split('@')[0],
+                username=username,
                 email=email,
                 first_name=client_name,
                 role=UserRole.BUSINESS,
@@ -223,24 +314,40 @@ def create_public_inquiry(validated_data: dict) -> Inquiry:
             user.set_unusable_password()
             user.save()
 
-        # Ensure business profile exists for this client identity
-        business_profile = BusinessProfile.objects.filter(user=user).first()
-        if not business_profile:
-            business_profile = BusinessProfile.objects.create(
-                user=user,
-                company_name=company_name,
-                contact_name=client_name or company_name,
-                business_type="Brand Client",
-                contact_email=email,
-                contact_phone=validated_data.get('client_phone', '')
-            )
+        # Ensure BusinessProfile exists and is linked
+        business_profile, _ = BusinessProfile.objects.get_or_create(
+            user=user,
+            defaults={
+                'company_name': company_name,
+                'contact_name': client_name or company_name,
+                'business_type': 'Brand Client',
+                'contact_email': email,
+                'contact_phone': client_phone,
+                'status': 'ACTIVE',
+            }
+        )
 
-        # Step 3: Compute initial financial budget
+        # Step 4: Compute initial financial budget
         raw_budget = validated_data.get('budget')
-        budget_cents = (int(raw_budget) * 100) if raw_budget else None
-        currency = validated_data.get('currency', 'INR')
+        if raw_budget:
+            budget_cents = int(raw_budget) * 100
+        elif service_package and service_package.starting_price_cents:
+            budget_cents = service_package.starting_price_cents
+        else:
+            budget_cents = None
 
-        # Step 4: Create the primary collaboration Inquiry thread
+        currency = validated_data.get('currency') or (service_package.currency if service_package else 'INR')
+
+        # Step 5: Format initial message body including selected service details
+        base_message = validated_data['message'].strip()
+        if service_package:
+            price_display = f"{service_package.currency} {service_package.starting_price_cents // 100}"
+            service_annotation = f"\n\n[Selected Package: {service_package.name} ({price_display})]"
+            initial_body = f"{base_message}{service_annotation}"
+        else:
+            initial_body = base_message
+
+        # Step 6: Create the primary collaboration Inquiry thread
         inquiry = Inquiry.objects.create(
             business=business_profile,
             creator=creator,
@@ -250,15 +357,15 @@ def create_public_inquiry(validated_data: dict) -> Inquiry:
             status=InquiryStatus.NEW
         )
 
-        # Step 5: Append opening communication message to thread
+        # Step 7: Append opening communication message to thread
         InquiryMessage.objects.create(
             inquiry=inquiry,
             sender=user,
-            body=validated_data['message'].strip(),
+            body=initial_body,
             is_read=False
         )
 
-        # Step 6: Audit log creation
+        # Step 8: Audit log creation
         record_audit_log(
             admin=user,
             action='CREATE_INQUIRY',
@@ -267,6 +374,20 @@ def create_public_inquiry(validated_data: dict) -> Inquiry:
             result='SUCCESS',
             reason=f"Public inquiry from {company_name} to @{creator.handle}"
         )
+
+        # Step 9: Wire automated notification to creator (REQ-NOTIF-02)
+        try:
+            from apps.common.api.v1.services import create_user_notification
+            from apps.common.models import NotificationKind
+            if creator.user:
+                create_user_notification(
+                    recipient=creator.user,
+                    title=f"New Collaboration Inquiry: {inquiry.subject}",
+                    message=f"Brand {company_name} submitted a collaboration proposal.",
+                    kind=NotificationKind.CAMPAIGN
+                )
+        except Exception:
+            pass
 
     return inquiry
 

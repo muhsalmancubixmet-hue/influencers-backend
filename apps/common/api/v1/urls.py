@@ -17,13 +17,19 @@ from apps.common.api.v1.views import (
     NotificationMarkReadView,
     AdminDashboardStatsView,
     AdminServiceTypeListCreateView,
-    AdminServiceTypeDetailView
+    AdminServiceTypeDetailView,
+    AdminMediaAssetListView,
+    AdminMediaAssetDetailView
 )
 
 urlpatterns = [
     # Admin Executive Dashboard Overview
     path('admin/dashboard/stats/', AdminDashboardStatsView.as_view(), name='admin_dashboard_stats'),
     path('admin/verification/queue/', AdminVerificationQueueView.as_view(), name='admin_verification_queue'),
+
+    # Admin Media Library & CDN Assets
+    path('admin/media/', AdminMediaAssetListView.as_view(), name='admin_media_list'),
+    path('admin/media/<uuid:pk>/', AdminMediaAssetDetailView.as_view(), name='admin_media_detail'),
 
     # Admin Social platforms & petitions
     path('admin/social-platforms/', AdminSocialPlatformListCreateView.as_view(), name='admin_social_platforms_list_create'),

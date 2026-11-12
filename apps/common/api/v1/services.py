@@ -206,6 +206,73 @@ def dispatch_broadcast_notification(
     )
 
 
+def create_user_notification(
+    recipient: User,
+    title: str,
+    message: str,
+    kind: str = NotificationKind.USER
+) -> Notification:
+    """
+    Transactional helper creating a targeted direct user notification (REQ-NOTIF-01).
+
+    :param recipient: User receiving the alert.
+    :param title: Notification headline.
+    :param message: Full notification text or markdown body.
+    :param kind: NotificationKind category (SYSTEM, USER, CAMPAIGN, VERIFICATION).
+    :return: Created Notification model instance.
+    :raises ValidationError: If recipient is missing or inactive, or if title/message is empty.
+    """
+    if not recipient or not getattr(recipient, 'is_active', True):
+        raise ValidationError("Valid and active recipient User is required for targeted notifications.")
+
+    clean_title = title.strip()
+    if not clean_title:
+        raise ValidationError("Notification title cannot be blank.")
+
+    clean_message = message.strip()
+    if not clean_message:
+        raise ValidationError("Notification message body cannot be blank.")
+
+    valid_kinds = [k.value for k in NotificationKind]
+    if kind not in valid_kinds:
+        kind = NotificationKind.USER
+
+    with transaction.atomic():
+        notif = Notification.objects.create(
+            recipient=recipient,
+            title=clean_title,
+            message=clean_message,
+            kind=kind,
+            audience='',
+            status=NotificationStatus.SENT,
+            is_read=False
+        )
+
+    # Optional real-time event dispatch if channel layer is configured
+    try:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            async_to_sync(channel_layer.group_send)(
+                f"user_{recipient.id}",
+                {
+                    "type": "notification.message",
+                    "notification": {
+                        "id": str(notif.id),
+                        "title": notif.title,
+                        "message": notif.message,
+                        "kind": notif.kind,
+                        "created_at": notif.created_at.isoformat()
+                    }
+                }
+            )
+    except Exception:
+        pass
+
+    return notif
+
+
 def create_creator_platform_request(
     user: User,
     platform_name: str,

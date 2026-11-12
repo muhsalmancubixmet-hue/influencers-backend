@@ -15,7 +15,8 @@ from apps.common.models import (
     TicketMessage,
     AuditLog,
     Notification,
-    ServiceType
+    ServiceType,
+    MediaAsset
 )
 from apps.common.api.v1.serializers import (
     SocialPlatformSerializer,
@@ -26,7 +27,8 @@ from apps.common.api.v1.serializers import (
     StaffTicketMessageSerializer,
     AuditLogSerializer,
     NotificationSerializer,
-    ServiceTypeSerializer
+    ServiceTypeSerializer,
+    MediaAssetSerializer
 )
 from apps.common.api.v1.services import (
     review_platform_request,
@@ -466,6 +468,10 @@ class NotificationMarkReadView(APIView):
         notif.save(update_fields=['is_read', 'updated_at'])
         return Response({'status': 'read'}, status=status.HTTP_200_OK)
 
+    def post(self, request, pk, *args, **kwargs):
+        """Allow POST alias for clients marking notifications read."""
+        return self.patch(request, pk, *args, **kwargs)
+
 
 class AdminVerificationQueueView(APIView):
     """
@@ -746,3 +752,100 @@ class AdminDashboardStatsView(APIView):
         }
 
         return Response(payload, status=status.HTTP_200_OK)
+
+
+class AdminMediaAssetListView(APIView):
+    """
+    Administrative overview of portfolio media assets, avatars, and campaign files (REQ-ADM-01).
+    Enforces strict RBAC via ModuleChoice.MEDIA.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @require_module_access(ModuleChoice.MEDIA, 'VIEW')
+    def get(self, request, *args, **kwargs):
+        """
+        List media assets with optional search and type filtering.
+        """
+        from django.db.models import Q
+        from apps.common.models import MediaAsset
+        from apps.common.api.v1.serializers import MediaAssetSerializer
+
+        qs = MediaAsset.objects.select_related('uploader').filter(is_deleted=False)
+
+        # Type filter
+        file_type = request.query_params.get('type') or request.query_params.get('file_type')
+        if file_type and file_type.upper() != 'ALL':
+            qs = qs.filter(file_type=file_type.upper())
+
+        # Search filter
+        search = request.query_params.get('search')
+        if search:
+            clean_search = search.strip()
+            qs = qs.filter(
+                Q(file_name__icontains=clean_search) |
+                Q(uploader__email__icontains=clean_search) |
+                Q(uploader__username__icontains=clean_search)
+            )
+
+        paginator = PageNumberPagination()
+        paginator.page_size = 50
+        page = paginator.paginate_queryset(qs, request)
+        if page is not None:
+            serializer = MediaAssetSerializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
+
+        serializer = MediaAssetSerializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AdminMediaAssetDetailView(APIView):
+    """
+    Administrative detail and moderation/deletion for individual media assets (REQ-ADM-01).
+    """
+    permission_classes = [IsAuthenticated]
+
+    @require_module_access(ModuleChoice.MEDIA, 'VIEW')
+    def get(self, request, pk, *args, **kwargs):
+        """
+        Retrieve details of a specific media asset.
+        """
+        from apps.common.models import MediaAsset
+        from apps.common.api.v1.serializers import MediaAssetSerializer
+
+        try:
+            asset = MediaAsset.objects.select_related('uploader').get(id=pk, is_deleted=False)
+        except (MediaAsset.DoesNotExist, ValueError):
+            return Response({'detail': 'Media asset not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = MediaAssetSerializer(asset)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @require_module_access(ModuleChoice.MEDIA, 'MANAGE')
+    def delete(self, request, pk, *args, **kwargs):
+        """
+        Soft-delete a media asset and record compliance audit log.
+        """
+        from django.db import transaction
+        from apps.common.models import MediaAsset
+        from apps.common.api.v1.services import record_audit_log
+
+        try:
+            asset = MediaAsset.objects.get(id=pk, is_deleted=False)
+        except (MediaAsset.DoesNotExist, ValueError):
+            return Response({'detail': 'Media asset not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        with transaction.atomic():
+            asset.is_deleted = True
+            asset.save(update_fields=['is_deleted', 'updated_at'])
+
+            record_audit_log(
+                admin=request.user,
+                action='DELETE_MEDIA_ASSET',
+                entity='MediaAsset',
+                entity_id=str(asset.id),
+                request=request,
+                reason=f"Administrator removed media asset: {asset.file_name} ({asset.file_type})"
+            )
+
+        return Response({'status': 'deleted', 'id': str(pk)}, status=status.HTTP_200_OK)
+

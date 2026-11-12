@@ -250,6 +250,16 @@ class StaffInviteAcceptSerializer(serializers.Serializer):
     first_name = serializers.CharField(max_length=50, required=False, allow_blank=True)
     last_name = serializers.CharField(max_length=50, required=False, allow_blank=True)
 
+    def validate_password(self, value: str) -> str:
+        """Enforce Django password validators on staff invite acceptance (REQ-SEC-05)."""
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return value
+
 
 class StaffInviteRevokeSerializer(serializers.Serializer):
     """Payload contract for revoking or declining an administrative staff invitation."""

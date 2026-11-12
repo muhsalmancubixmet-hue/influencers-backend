@@ -75,6 +75,13 @@ class Campaign(BaseModel):
         help_text="Specific geographic hub targeted for this campaign."
     )
 
+    # Hero cover banner image URL for visual cards and campaign detail
+    cover_image_url = models.URLField(
+        max_length=500,
+        blank=True,
+        help_text="Cover banner or hero image URL for this campaign brief."
+    )
+
     # Total allocated campaign budget in smallest currency unit (paise/cents)
     total_budget_cents = models.PositiveIntegerField(
         default=0,

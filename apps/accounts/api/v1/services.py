@@ -227,8 +227,11 @@ def accept_staff_invitation(
     from rest_framework_simplejwt.tokens import RefreshToken
     from apps.common.api.v1.services import record_audit_log
 
-    if len(password.strip()) < 8:
-        raise ValidationError("Password must be at least 8 characters.")
+    from django.contrib.auth.password_validation import validate_password
+    try:
+        validate_password(password)
+    except ValidationError as exc:
+        raise ValidationError(" ".join(exc.messages) if hasattr(exc, 'messages') else str(exc))
 
     try:
         token_uuid = uuid.UUID(str(token).strip())
@@ -273,6 +276,11 @@ def accept_staff_invitation(
                 user.first_name = first_name.strip()
             if last_name:
                 user.last_name = last_name.strip()
+
+        try:
+            validate_password(password, user=user)
+        except ValidationError as exc:
+            raise ValidationError(" ".join(exc.messages) if hasattr(exc, 'messages') else str(exc))
 
         user.set_password(password)
         user.save()

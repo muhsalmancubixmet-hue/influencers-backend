@@ -263,3 +263,132 @@ class RoleTemplateSerializerRegressionTests(TestCase):
         self.assertTrue(serializer.data['is_system'])
 
 
+class CorsConfigurationSecurityTests(TestCase):
+    """
+    Security regression test suite validating multi-frontend CORS whitelist configuration.
+    Ensures that business portal (http://localhost:8083) receives valid CORS headers
+    and disallowed origins are blocked without wildcard bypass.
+    """
+
+    def setUp(self) -> None:
+        """
+        Initialize API test client.
+
+        :return: None
+        """
+        self.client = APIClient()
+
+    def test_business_portal_cors_preflight_allowed(self) -> None:
+        """
+        Ensure OPTIONS preflight request from http://localhost:8083 receives
+        Access-Control-Allow-Origin header.
+
+        :return: None
+        """
+        response = self.client.options(
+            '/api/v1/business/campaigns/',
+            HTTP_ORIGIN='http://localhost:8083',
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD='POST',
+            HTTP_ACCESS_CONTROL_REQUEST_HEADERS='content-type,x-target-portal,authorization'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.headers.get('Access-Control-Allow-Origin'), 'http://localhost:8083')
+        self.assertEqual(response.headers.get('Access-Control-Allow-Credentials'), 'true')
+
+    def test_disallowed_origin_cors_preflight_blocked(self) -> None:
+        """
+        Ensure OPTIONS preflight request from unauthorized origin does NOT receive
+        Access-Control-Allow-Origin header.
+
+        :return: None
+        """
+        response = self.client.options(
+            '/api/v1/business/campaigns/',
+            HTTP_ORIGIN='http://malicious-site.example.com',
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD='POST',
+            HTTP_ACCESS_CONTROL_REQUEST_HEADERS='content-type,x-target-portal,authorization'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNone(response.headers.get('Access-Control-Allow-Origin'))
+
+
+class StaffInvitePasswordValidationTests(TestCase):
+    """
+    Test suite validating Django password validation enforcement during
+    staff invitation redemption (REQ-SEC-05).
+    """
+
+    def setUp(self) -> None:
+        import uuid
+        from django.utils import timezone
+        from apps.accounts.models import StaffInvitation, RoleTemplate
+
+        self.client = APIClient()
+        self.superadmin = User.objects.create_superuser(
+            username='super_admin',
+            email='admin@influencers.com',
+            password='AdminPassword#2026!'
+        )
+        self.role_template = RoleTemplate.objects.create(
+            name='Editor',
+            is_system_role=True
+        )
+        self.invitation = StaffInvitation.objects.create(
+            email='newstaff@influencers.com',
+            role_template=self.role_template,
+            invited_by=self.superadmin,
+            token=uuid.uuid4(),
+            expires_at=timezone.now() + timezone.timedelta(days=7),
+            is_accepted=False
+        )
+        self.accept_url = '/api/v1/auth/staff/invite/accept/'
+
+    def test_accept_invitation_service_rejects_common_password(self) -> None:
+        """
+        accept_staff_invitation service must reject common passwords with ValidationError.
+        """
+        from apps.accounts.api.v1.services import accept_staff_invitation
+
+        with self.assertRaises(ValidationError) as ctx:
+            accept_staff_invitation(
+                token=str(self.invitation.token),
+                password='password'
+            )
+        self.assertTrue('common' in str(ctx.exception).lower() or 'short' in str(ctx.exception).lower())
+
+    def test_accept_invitation_api_endpoint_rejects_weak_password(self) -> None:
+        """
+        POST /api/v1/auth/invite/accept/ must return HTTP 400 Bad Request
+        when a weak or common password is provided.
+        """
+        payload = {
+            'token': str(self.invitation.token),
+            'password': '12345678',
+            'first_name': 'New',
+            'last_name': 'Staff'
+        }
+        response = self.client.post(self.accept_url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_accept_invitation_service_succeeds_with_strong_password(self) -> None:
+        """
+        accept_staff_invitation service must succeed and activate staff account
+        when provided a compliant strong password.
+        """
+        from apps.accounts.api.v1.services import accept_staff_invitation
+
+        result = accept_staff_invitation(
+            token=str(self.invitation.token),
+            password='Secure#Staff$Pass2026!',
+            first_name='Alex',
+            last_name='Staff'
+        )
+        self.assertIsNotNone(result['user'])
+        self.assertEqual(result['user'].email, 'newstaff@influencers.com')
+        self.assertTrue(result['user'].is_active)
+        self.assertTrue(result['user'].check_password('Secure#Staff$Pass2026!'))
+        self.invitation.refresh_from_db()
+        self.assertTrue(self.invitation.is_accepted)
+
+
+

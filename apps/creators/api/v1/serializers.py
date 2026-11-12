@@ -938,4 +938,15 @@ class PublicCreatorDetailSerializer(PublicCreatorListSerializer):
         return []
 
 
+class PublicMediaKitRequestSerializer(serializers.Serializer):
+    """
+    Payload validation contract for requesting creator media kit / rate cards.
+    """
+    requester_name = serializers.CharField(max_length=150)
+    requester_email = serializers.EmailField()
+    company_name = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+
+
 

@@ -145,6 +145,16 @@ class BusinessRegistrationSerializer(serializers.Serializer):
             raise serializers.ValidationError("An account with this electronic mail address already exists.")
         return clean
 
+    def validate_password(self, value: str) -> str:
+        """Enforce Django password validators on business registration (REQ-SEC-05)."""
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages))
+        return value
+
 
 class BusinessProfileUpdateSerializer(serializers.ModelSerializer):
     """

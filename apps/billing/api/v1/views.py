@@ -12,9 +12,15 @@ from apps.billing.api.v1.serializers import (
     PlanSerializer,
     PaymentSerializer,
     SubscriptionSerializer,
-    RefundPaymentSerializer
+    RefundPaymentSerializer,
+    CheckoutOrderCreateSerializer,
+    CheckoutPaymentVerifySerializer,
 )
-from apps.billing.api.v1.services import process_payment_refund
+from apps.billing.api.v1.services import (
+    process_payment_refund,
+    create_razorpay_order,
+    verify_razorpay_payment,
+)
 
 
 class AdminPlanListCreateView(APIView):
@@ -257,3 +263,117 @@ class AdminBillingReportsView(APIView):
         }
 
         return Response(payload, status=status.HTTP_200_OK)
+
+
+class PlanListView(APIView):
+    """
+    List available active SaaS subscription plans for customer portals.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        audience = request.query_params.get('audience')
+        qs = Plan.objects.filter(is_active=True, is_deleted=False).order_by('price_cents')
+        if audience:
+            qs = qs.filter(audience=audience.upper())
+        serializer = PlanSerializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class UserSubscriptionDetailView(APIView):
+    """
+    Retrieve active subscription and entitlements for the authenticated user.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        sub = Subscription.objects.filter(user=request.user, is_deleted=False).select_related('plan').first()
+        if not sub:
+            return Response({'status': 'NO_SUBSCRIPTION', 'plan': None}, status=status.HTTP_200_OK)
+        serializer = SubscriptionSerializer(sub)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class BillingCheckoutOrderView(APIView):
+    """
+    Create a Razorpay order for purchasing or upgrading a SaaS subscription (REQ-PAY-02).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        serializer = CheckoutOrderCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        plan_id = serializer.validated_data['plan_id']
+
+        try:
+            order_data = create_razorpay_order(user=request.user, plan_id=plan_id)
+            return Response(order_data, status=status.HTTP_201_CREATED)
+        except ValidationError as exc:
+            msg = exc.messages[0] if hasattr(exc, 'messages') else str(exc)
+            return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({'detail': f"Unable to create order: {str(exc)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class BillingCheckoutVerifyView(APIView):
+    """
+    Verify HMAC SHA256 payment signature and activate subscription (REQ-PAY-03).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        serializer = CheckoutPaymentVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            result = verify_razorpay_payment(
+                user=request.user,
+                razorpay_order_id=serializer.validated_data['razorpay_order_id'],
+                razorpay_payment_id=serializer.validated_data['razorpay_payment_id'],
+                razorpay_signature=serializer.validated_data['razorpay_signature'],
+                plan_id=serializer.validated_data['plan_id']
+            )
+            return Response(result, status=status.HTTP_200_OK)
+        except ValidationError as exc:
+            msg = exc.messages[0] if hasattr(exc, 'messages') else str(exc)
+            return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({'detail': f"Payment verification error: {str(exc)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class BusinessSubscriptionSendReceiptView(APIView):
+    """
+    On-demand dispatch of the latest paid invoice & tax receipt to the customer's email.
+    Invoked when clicking 'Manage billing' or 'Email receipt'.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        from apps.billing.models import Payment, PaymentStatus
+        from django.conf import settings
+        from apps.billing.tasks import send_payment_invoice_email_task
+
+        payment = Payment.objects.filter(
+            user=request.user,
+            status=PaymentStatus.PAID,
+            is_deleted=False
+        ).order_by('-created_at').first()
+
+        if not payment:
+            return Response(
+                {'detail': "No settled subscription payment found on your account to issue a receipt for."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        is_eager = getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False)
+        if is_eager:
+            send_payment_invoice_email_task.apply(args=[str(payment.id)])
+        else:
+            send_payment_invoice_email_task.delay(str(payment.id))
+
+        return Response({
+            'detail': f"Tax invoice has been sent to {request.user.email}.",
+            'email': request.user.email,
+            'payment_id': str(payment.id)
+        }, status=status.HTTP_200_OK)
+

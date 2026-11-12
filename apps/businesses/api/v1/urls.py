@@ -14,6 +14,7 @@ from apps.businesses.api.v1.views import (
     BusinessRequirementDetailView,
     BusinessInquiryListView,
     BusinessInquiryMessagesView,
+    BusinessInquiriesUnreadCountView,
     BusinessDashboardStatsView,
     BusinessShortlistListCreateView,
     BusinessShortlistDetailView,
@@ -22,7 +23,8 @@ from apps.businesses.api.v1.views import (
     BusinessSavedSearchListCreateView,
     BusinessSavedSearchDetailView,
     BusinessSavedSearchToggleNotifyView,
-    BusinessAnalyticsView
+    BusinessAnalyticsView,
+    BusinessMediaUploadView,
 )
 
 urlpatterns = [
@@ -44,8 +46,10 @@ urlpatterns = [
     path('business/requirements/', BusinessRequirementListCreateView.as_view(), name='business_requirements_list_create'),
     path('business/requirements/<uuid:pk>/', BusinessRequirementDetailView.as_view(), name='business_requirements_detail'),
     path('business/inquiries/', BusinessInquiryListView.as_view(), name='business_inquiries_list'),
+    path('business/inquiries/unread-count/', BusinessInquiriesUnreadCountView.as_view(), name='business_inquiries_unread_count'),
     path('business/inquiries/<uuid:pk>/messages/', BusinessInquiryMessagesView.as_view(), name='business_inquiry_messages'),
     path('business/dashboard/stats/', BusinessDashboardStatsView.as_view(), name='business_dashboard_stats'),
+    path('business/media/upload/', BusinessMediaUploadView.as_view(), name='business_media_upload'),
 
     # Shortlists Management Endpoints
     path('business/shortlists/', BusinessShortlistListCreateView.as_view(), name='business_shortlists_list_create'),

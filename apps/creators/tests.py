@@ -356,3 +356,139 @@ class AdminInfluencerDetailRegressionTests(APITestCase):
         self.assertEqual(len(response.data['service_areas']), 1)
         self.assertEqual(response.data['service_areas'][0]['location']['name'], 'Kochi')
 
+
+class CreatorMediaKitPdfTests(APITestCase):
+    """
+    Test suite validating ReportLab branded Media Kit PDF generation,
+    storage, and dispatch integration (REQ-INT-02).
+    """
+
+    def setUp(self) -> None:
+        from apps.creators.models import ProfileStatus, VerificationStatus
+        self.creator_user = User.objects.create_user(
+            username='mediakit_creator',
+            email='mediakit.creator@example.com',
+            password='SecurePassword123!',
+            role=UserRole.CREATOR,
+            is_active=True
+        )
+        self.creator = CreatorProfile.objects.create(
+            user=self.creator_user,
+            handle='mediakit_star',
+            display_name='MediaKit Star',
+            bio='Lifestyle & Tech creator creating premium reels.',
+            status=ProfileStatus.ACTIVE,
+            verification_status=VerificationStatus.VERIFIED
+        )
+
+    def test_generate_creator_media_kit_pdf_produces_valid_pdf_bytes(self) -> None:
+        """
+        Ensure generate_creator_media_kit_pdf outputs non-empty bytes starting with %PDF.
+        """
+        from apps.creators.api.v1.services import generate_creator_media_kit_pdf
+
+        pdf_bytes = generate_creator_media_kit_pdf(self.creator)
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(len(pdf_bytes) > 500)
+        self.assertTrue(pdf_bytes.startswith(b'%PDF'))
+
+    def test_request_creator_media_kit_service_persists_file_and_returns_url(self) -> None:
+        """
+        Ensure request_creator_media_kit generates the PDF file on disk
+        and returns access download_url.
+        """
+        import os
+        from django.conf import settings
+        from apps.creators.api.v1.services import request_creator_media_kit
+
+        payload = {
+            'requester_name': 'Acme Marketing',
+            'requester_email': 'brand.lead@acme.com',
+            'company_name': 'Acme Brands Corp',
+            'notes': 'Looking forward to collaboration'
+        }
+
+        result = request_creator_media_kit(self.creator.handle, payload)
+
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['creator_handle'], 'mediakit_star')
+        self.assertIn('download_url', result)
+        self.assertTrue(result['download_url'].endswith(f"{self.creator.id}_mediakit.pdf"))
+
+        expected_file_path = os.path.join(settings.MEDIA_ROOT, 'media_kits', f"{self.creator.id}_mediakit.pdf")
+        self.assertTrue(os.path.exists(expected_file_path))
+
+    def test_public_media_kit_endpoint_returns_200(self) -> None:
+        """
+        POST /api/v1/public/creators/<slug>/media-kit/ must return HTTP 200 with download_url.
+        """
+        url = f"/api/v1/public/creators/{self.creator.handle}/media-kit/"
+        payload = {
+            'requester_name': 'Brand Scout',
+            'requester_email': 'scout@brands.io',
+            'company_name': 'Brand Scout Inc'
+        }
+
+        response = self.client.post(url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'success')
+        self.assertIn('download_url', response.data)
+
+
+class CreatorAnalyticsViewTests(APITestCase):
+    """
+    Test suite validating creator analytics endpoint behavior and tenant boundaries.
+    """
+
+    def setUp(self) -> None:
+        """Seed creator user, profile, and test inquiries for analytics calculation."""
+        from apps.creators.models import PortfolioItem
+        self.creator_user = User.objects.create_user(
+            username='analytics_creator',
+            email='analytics.creator@example.com',
+            password='SecurePassword123!',
+            role=UserRole.CREATOR
+        )
+        self.creator_profile = CreatorProfile.objects.create(
+            user=self.creator_user,
+            handle='analytics_pro',
+            display_name='Analytics Pro'
+        )
+        PortfolioItem.objects.create(
+            creator=self.creator_profile,
+            title='Featured Campaign Reel',
+            views_count=1542,
+            media_url='https://example.com/asset.png'
+        )
+        self.analytics_url = reverse('creator_analytics')
+
+    def test_unauthenticated_analytics_access_denied(self) -> None:
+        """Unauthenticated requests must be rejected with 401 Unauthorized."""
+        response = self.client.get(self.analytics_url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_creator_analytics_summary_success(self) -> None:
+        """Authenticated creators must receive aggregated analytics summary."""
+        self.client.force_authenticate(user=self.creator_user)
+        response = self.client.get(self.analytics_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['profile_views'], 1542)
+        self.assertIn('website_visitors', response.data)
+        self.assertIn('total_inquiries', response.data)
+        self.assertIn('chart_data', response.data)
+        self.assertEqual(len(response.data['chart_data']), 7)
+
+    def test_non_creator_user_analytics_forbidden(self) -> None:
+        """Users without a CreatorProfile must receive 403 Forbidden."""
+        other_user = User.objects.create_user(
+            username='non_creator',
+            email='non.creator@example.com',
+            password='SecurePassword123!',
+            role=UserRole.BUSINESS
+        )
+        self.client.force_authenticate(user=other_user)
+        response = self.client.get(self.analytics_url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+

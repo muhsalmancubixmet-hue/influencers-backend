@@ -3,12 +3,14 @@ from apps.taxonomies.models import Category, Location, LocationType
 
 
 class CategorySerializer(serializers.ModelSerializer):
-    """Serializer representing taxonomy niche category."""
+    """Serializer representing taxonomy niche category with creator count metrics."""
+    creator_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = Category
-        fields = ['id', 'name', 'slug', 'order', 'is_active', 'created_at']
-        read_only_fields = ['id', 'created_at']
+        fields = ['id', 'name', 'slug', 'order', 'is_active', 'creator_count', 'created_at']
+        read_only_fields = ['id', 'creator_count', 'created_at']
+
 
 
 class LocationSerializer(serializers.ModelSerializer):
@@ -54,6 +56,17 @@ class LocationSerializer(serializers.ModelSerializer):
             ).count()
             return direct_count + sub_count
         return direct_count
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        if instance.parent:
+            ret['parent'] = {
+                'id': str(instance.parent.id),
+                'name': instance.parent.name
+            }
+        else:
+            ret['parent'] = None
+        return ret
 
     def to_internal_value(self, data):
         mutable_data = data.copy() if hasattr(data, 'copy') else dict(data)

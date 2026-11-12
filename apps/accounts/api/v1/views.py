@@ -130,7 +130,8 @@ class StaffListCreateView(APIView):
                 last_name=serializer.validated_data.get('last_name', '')
             )
         except ValidationError as err:
-            return Response({'detail': err.message}, status=status.HTTP_400_BAD_REQUEST)
+            err_msg = " ".join(err.messages) if hasattr(err, 'messages') else (err.message if hasattr(err, 'message') else str(err))
+            return Response({'detail': err_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         out_serializer = StaffInvitationSerializer(invitation)
         return Response(out_serializer.data, status=status.HTTP_201_CREATED)
@@ -186,7 +187,8 @@ class StaffInviteAcceptView(APIView):
                 last_name=serializer.validated_data.get('last_name', '')
             )
         except ValidationError as err:
-            return Response({'detail': err.message}, status=status.HTTP_400_BAD_REQUEST)
+            err_msg = " ".join(err.messages) if hasattr(err, 'messages') else (err.message if hasattr(err, 'message') else str(err))
+            return Response({'detail': err_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         user = result['user']
         staff_profile = result['staff_profile']
@@ -232,7 +234,8 @@ class StaffInviteRevokeView(APIView):
                 token=str(serializer.validated_data['token'])
             )
         except ValidationError as err:
-            return Response({'detail': err.message}, status=status.HTTP_400_BAD_REQUEST)
+            err_msg = " ".join(err.messages) if hasattr(err, 'messages') else (err.message if hasattr(err, 'message') else str(err))
+            return Response({'detail': err_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(result, status=status.HTTP_200_OK)
 
@@ -282,7 +285,8 @@ class StaffDetailView(APIView):
                 is_active=is_active if isinstance(is_active, bool) else None
             )
         except ValidationError as err:
-            return Response({'detail': err.message}, status=status.HTTP_400_BAD_REQUEST)
+            err_msg = " ".join(err.messages) if hasattr(err, 'messages') else (err.message if hasattr(err, 'message') else str(err))
+            return Response({'detail': err_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = StaffProfileSerializer(profile)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -315,7 +319,8 @@ class CreatorRegistrationView(APIView):
                 password=serializer.validated_data.get('password')
             )
         except ValidationError as err:
-            return Response({'detail': err.message}, status=status.HTTP_400_BAD_REQUEST)
+            err_msg = " ".join(err.messages) if hasattr(err, 'messages') else (err.message if hasattr(err, 'message') else str(err))
+            return Response({'detail': err_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         user = result['user']
         profile = result['profile']
@@ -359,7 +364,8 @@ class EmailVerificationView(APIView):
                 email=serializer.validated_data.get('email')
             )
         except ValidationError as err:
-            return Response({'detail': err.message}, status=status.HTTP_400_BAD_REQUEST)
+            err_msg = " ".join(err.messages) if hasattr(err, 'messages') else (err.message if hasattr(err, 'message') else str(err))
+            return Response({'detail': err_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         user = result['user']
         profile = result.get('profile')
@@ -403,7 +409,8 @@ class RevokeRegistrationView(APIView):
                 token=serializer.validated_data['token']
             )
         except ValidationError as err:
-            return Response({'detail': err.message}, status=status.HTTP_400_BAD_REQUEST)
+            err_msg = " ".join(err.messages) if hasattr(err, 'messages') else (err.message if hasattr(err, 'message') else str(err))
+            return Response({'detail': err_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(result, status=status.HTTP_200_OK)
 

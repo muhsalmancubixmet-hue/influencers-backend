@@ -80,3 +80,25 @@ class RefundPaymentSerializer(serializers.Serializer):
     """Payload contract for processing partial or full payment refunds."""
     refund_amount_cents = serializers.IntegerField(min_value=1)
     reason = serializers.CharField(min_length=5)
+
+
+class CheckoutOrderCreateSerializer(serializers.Serializer):
+    """
+    Payload contract for initiating a Razorpay checkout order (REQ-PAY-02).
+    """
+    plan_id = serializers.CharField(
+        max_length=64,
+        required=True,
+        help_text="UUID or identifier of the target Plan to subscribe to."
+    )
+
+
+class CheckoutPaymentVerifySerializer(serializers.Serializer):
+    """
+    Payload contract for cryptographically verifying a Razorpay checkout payment (REQ-PAY-03).
+    """
+    razorpay_order_id = serializers.CharField(max_length=128, required=True)
+    razorpay_payment_id = serializers.CharField(max_length=128, required=True)
+    razorpay_signature = serializers.CharField(max_length=256, required=True)
+    plan_id = serializers.CharField(max_length=64, required=True)
+

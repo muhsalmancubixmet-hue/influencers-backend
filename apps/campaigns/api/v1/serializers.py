@@ -98,6 +98,7 @@ class CampaignListSerializer(serializers.ModelSerializer):
             'category_name',
             'location',
             'location_text',
+            'cover_image_url',
             'budget',
             'total_budget_cents',
             'currency',
@@ -360,6 +361,7 @@ class PublicCampaignListSerializer(serializers.ModelSerializer):
     deadline = serializers.SerializerMethodField()
     creators = serializers.IntegerField(source='creators_needed', read_only=True)
     description = serializers.CharField(source='objective', read_only=True)
+    image = serializers.CharField(source='cover_image_url', read_only=True)
 
     class Meta:
         model = Campaign
@@ -378,7 +380,9 @@ class PublicCampaignListSerializer(serializers.ModelSerializer):
             'deliverables',
             'deadline',
             'creators',
-            'description'
+            'description',
+            'cover_image_url',
+            'image',
         ]
 
     def get_location(self, obj):
@@ -432,6 +436,26 @@ class PublicCampaignListSerializer(serializers.ModelSerializer):
 
     def get_deadline(self, obj) -> str:
         return obj.deadline.strftime("%b %d") if obj.deadline else "Open"
+
+
+class PublicCampaignDetailSerializer(PublicCampaignListSerializer):
+    """
+    Public comprehensive campaign detail serializer.
+    Includes target audience, business background, and complete brief specification.
+    """
+    business_website = serializers.CharField(source='business.website', read_only=True, default="")
+    target_audience = serializers.CharField(read_only=True, default="")
+    status = serializers.CharField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+
+    class Meta(PublicCampaignListSerializer.Meta):
+        fields = PublicCampaignListSerializer.Meta.fields + [
+            'business_website',
+            'target_audience',
+            'status',
+            'created_at'
+        ]
+
 
 
 class PublicInquiryCreateSerializer(serializers.Serializer):

@@ -11,12 +11,14 @@ from apps.campaigns.api.v1.views import (
     CreatorInquiryMessagesView,
     CreatorInquiryMarkReadView,
     PublicCampaignListView,
+    PublicCampaignDetailView,
     PublicInquiryCreateView
 )
 
 urlpatterns = [
     # Public marketplace endpoints
     path('public/campaigns/', PublicCampaignListView.as_view(), name='public_campaigns_list'),
+    path('public/campaigns/<uuid:pk>/', PublicCampaignDetailView.as_view(), name='public_campaigns_detail'),
     path('public/inquiries/', PublicInquiryCreateView.as_view(), name='public_inquiry_create'),
 
     # Creator Marketplace & Inquiries

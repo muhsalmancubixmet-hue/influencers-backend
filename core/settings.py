@@ -34,6 +34,16 @@ if not SECRET_KEY:
 # Debug mode flag (enables verbose tracebacks in dev; defaults to False when unset)
 DEBUG = os.environ.get('DEBUG', 'False').lower() in ('true', '1', 'yes')
 
+# Deployment environment flag: 'development' (SQLite default) | 'production' (PostgreSQL enforced)
+DJANGO_ENV = (
+    os.environ.get('DJANGO_ENV')
+    or os.environ.get('ENVIRONMENT')
+    or ('development' if DEBUG else 'production')
+).strip().lower()
+
+# Optional explicit database engine flag: 'sqlite' | 'postgres'
+DB_ENGINE = os.environ.get('DB_ENGINE', '').strip().lower()
+
 # Permitted host headers loaded from environment (wildcard '*' explicitly prohibited)
 raw_allowed = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1')
 ALLOWED_HOSTS = [h.strip() for h in raw_allowed.split(',') if h.strip() and h.strip() != '*']
@@ -103,22 +113,110 @@ TEMPLATES = [
 WSGI_APPLICATION = 'core.wsgi.application'
 ASGI_APPLICATION = 'core.asgi.application'
 
-# Channels real-time WebSocket channel layer configuration
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+# Channels real-time WebSocket channel layer configuration (REQ-INF-02)
+import sys
+from urllib.parse import urlparse, unquote, parse_qs
+
+_redis_channel_url = os.environ.get('CHANNEL_REDIS_URL') or os.environ.get('REDIS_URL')
+_use_redis_channels = bool(_redis_channel_url and os.environ.get('USE_REDIS_CHANNELS', 'True').lower() in ('true', '1', 'yes'))
+_is_testing = 'test' in sys.argv
+
+if _use_redis_channels and not _is_testing:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                'hosts': [_redis_channel_url],
+            },
+        }
     }
-}
+else:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        }
+    }
 
 
-# Database
+# Database (REQ-INF-01)
+# Flag-driven selection:
+#   - DJANGO_ENV=development (or DB_ENGINE=sqlite): uses local SQLite (db.sqlite3)
+#   - DJANGO_ENV=production  (or DB_ENGINE=postgres): enforces PostgreSQL via DATABASE_URL or POSTGRES_*
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
-DATABASES = {
-    'default': {
+
+def _build_sqlite_config():
+    """Return SQLite database settings using SQLITE_DB_NAME or default db.sqlite3."""
+    sqlite_name = os.environ.get('SQLITE_DB_NAME', 'db.sqlite3').strip() or 'db.sqlite3'
+    db_path = Path(sqlite_name)
+    if not db_path.is_absolute():
+        db_path = BASE_DIR / db_path
+    return {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': db_path,
     }
+
+
+def _build_postgres_config():
+    """Return PostgreSQL database settings from DATABASE_URL or discrete POSTGRES_* variables."""
+    conn_max_age = int(os.environ.get('DB_CONN_MAX_AGE', '600'))
+    db_url = os.environ.get('DATABASE_URL', '').strip()
+
+    if db_url:
+        parsed = urlparse(db_url)
+        if parsed.scheme in ('postgres', 'postgresql', 'pgsql'):
+            config = {
+                'ENGINE': 'django.db.backends.postgresql',
+                'NAME': unquote(parsed.path.lstrip('/')),
+                'USER': unquote(parsed.username or ''),
+                'PASSWORD': unquote(parsed.password or ''),
+                'HOST': parsed.hostname or 'localhost',
+                'PORT': str(parsed.port or 5432),
+                'CONN_MAX_AGE': conn_max_age,
+            }
+            query_params = parse_qs(parsed.query)
+            sslmode = query_params.get('sslmode', [None])[0] or os.environ.get('POSTGRES_SSLMODE', '').strip()
+            if sslmode:
+                config['OPTIONS'] = {'sslmode': sslmode}
+            return config
+        if parsed.scheme == 'sqlite':
+            return _build_sqlite_config()
+
+    pg_db = os.environ.get('POSTGRES_DB', '').strip()
+    if pg_db:
+        config = {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': pg_db,
+            'USER': os.environ.get('POSTGRES_USER', 'postgres').strip(),
+            'PASSWORD': os.environ.get('POSTGRES_PASSWORD', ''),
+            'HOST': os.environ.get('POSTGRES_HOST', 'localhost').strip(),
+            'PORT': os.environ.get('POSTGRES_PORT', '5432').strip(),
+            'CONN_MAX_AGE': conn_max_age,
+        }
+        sslmode = os.environ.get('POSTGRES_SSLMODE', '').strip()
+        if sslmode:
+            config['OPTIONS'] = {'sslmode': sslmode}
+        return config
+
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        "PostgreSQL credentials (DATABASE_URL or POSTGRES_DB) are mandatory when DB_ENGINE=postgres or DJANGO_ENV=production."
+    )
+
+
+def _select_database_config():
+    """Select SQLite for local development and PostgreSQL for production/staging."""
+    if DB_ENGINE == 'sqlite':
+        return _build_sqlite_config()
+    if DB_ENGINE in ('postgres', 'postgresql', 'pgsql'):
+        return _build_postgres_config()
+    if DJANGO_ENV in ('production', 'staging'):
+        return _build_postgres_config()
+    return _build_sqlite_config()
+
+
+DATABASES = {
+    'default': _select_database_config()
 }
 
 
@@ -345,3 +443,9 @@ SPECTACULAR_SETTINGS = {
     'SERVE_INCLUDE_SCHEMA': False,
     'COMPONENT_SPLIT_REQUEST': True,
 }
+
+# Razorpay Payment Gateway Configuration (REQ-PAY-01)
+RAZORPAY_KEY_ID = os.environ.get('RAZORPAY_KEY_ID', '')
+RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET', '')
+RAZORPAY_MODE = os.environ.get('RAZORPAY_MODE', 'test')
+

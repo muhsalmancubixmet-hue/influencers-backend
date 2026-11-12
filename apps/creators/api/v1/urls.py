@@ -14,16 +14,20 @@ from apps.creators.api.v1.views import (
     AdminInfluencerListView,
     AdminInfluencerDetailView,
     PublicCreatorListView,
-    PublicCreatorDetailView
+    PublicCreatorDetailView,
+    PublicMediaKitRequestView,
+    CreatorAnalyticsView
 )
 
 urlpatterns = [
     # Public marketplace endpoints
     path('public/creators/', PublicCreatorListView.as_view(), name='public_creators_list'),
     path('public/creators/<str:slug>/', PublicCreatorDetailView.as_view(), name='public_creators_detail'),
+    path('public/creators/<str:slug>/media-kit/', PublicMediaKitRequestView.as_view(), name='public_creators_media_kit'),
 
     # Creator workspace endpoints
     path('creator/profile/', CreatorProfileView.as_view(), name='creator_profile'),
+    path('creator/analytics/', CreatorAnalyticsView.as_view(), name='creator_analytics'),
     path('creator/media/upload/', CreatorMediaUploadView.as_view(), name='creator_media_upload'),
     path('creator/portfolio/', CreatorPortfolioListCreateView.as_view(), name='creator_portfolio_list_create'),
     path('creator/portfolio/reorder/', CreatorPortfolioReorderView.as_view(), name='creator_portfolio_reorder'),

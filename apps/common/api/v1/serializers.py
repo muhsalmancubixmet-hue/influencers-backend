@@ -283,3 +283,41 @@ class ServiceTypeSerializer(serializers.ModelSerializer):
             mutable_data.pop('platform', None)
 
         return super().to_internal_value(mutable_data)
+
+
+class MediaAssetSerializer(serializers.ModelSerializer):
+    """
+    Serializer representing digital media assets in the admin library (REQ-ADM-01).
+    """
+    uploader_name = serializers.SerializerMethodField()
+    uploader_email = serializers.EmailField(source='uploader.email', read_only=True)
+    size_kb = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MediaAsset
+        fields = [
+            'id',
+            'file_name',
+            'file_type',
+            'file_size_bytes',
+            'size_kb',
+            'cdn_url',
+            'mime_type',
+            'uploader',
+            'uploader_name',
+            'uploader_email',
+            'created_at',
+            'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_uploader_name(self, obj: MediaAsset) -> str:
+        if not obj.uploader:
+            return "System"
+        return obj.uploader.get_full_name() or obj.uploader.username
+
+    def get_size_kb(self, obj: MediaAsset) -> int:
+        if not obj.file_size_bytes:
+            return 0
+        return round(obj.file_size_bytes / 1024)
+
