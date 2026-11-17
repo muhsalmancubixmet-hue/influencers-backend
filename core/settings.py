@@ -10,7 +10,8 @@ _env_file = BASE_DIR / '.env'
 if _env_file.exists():
     try:
         from dotenv import load_dotenv
-        load_dotenv(_env_file, override=True)
+        # Allow system environment variables to take precedence over local .env
+        load_dotenv(_env_file, override=False)
     except ImportError:
         # Fallback pure-Python parser ensuring .env works even without python-dotenv package
         with open(_env_file, 'r', encoding='utf-8') as _f:
@@ -20,7 +21,8 @@ if _env_file.exists():
                     _k, _v = _line.split('=', 1)
                     _k = _k.strip()
                     _v = _v.strip().strip('"').strip("'")
-                    os.environ[_k] = _v
+                    if _k not in os.environ:
+                        os.environ[_k] = _v
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
@@ -49,6 +51,21 @@ raw_allowed = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1')
 ALLOWED_HOSTS = [h.strip() for h in raw_allowed.split(',') if h.strip() and h.strip() != '*']
 if not ALLOWED_HOSTS:
     ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+
+# -----------------------------------------------------------------------------
+# Production HTTPS, HSTS & Cookie Security
+# -----------------------------------------------------------------------------
+if not DEBUG:
+    SECURE_SSL_REDIRECT = os.environ.get('SECURE_SSL_REDIRECT', 'True').lower() in ('true', '1', 'yes')  # Enforce HTTPS redirect
+    SESSION_COOKIE_SECURE = True  # Transmit session cookies only over HTTPS
+    CSRF_COOKIE_SECURE = True  # Transmit CSRF tokens only over HTTPS
+    SECURE_BROWSER_XSS_FILTER = True  # Enable browser XSS filtering header
+    SECURE_CONTENT_TYPE_NOSNIFF = True  # Prevent MIME-type sniffing
+    X_FRAME_OPTIONS = 'DENY'  # Block clickjacking via iframe embedding
+    SECURE_HSTS_SECONDS = 31536000  # Enforce HSTS for 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True  # Apply HSTS to all subdomains
+    SECURE_HSTS_PRELOAD = True  # Allow HSTS preload list inclusion
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')  # Trust reverse-proxy HTTPS header
 
 
 # Application definition
@@ -255,6 +272,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = 'static/'
+# Absolute filesystem path where Django's collectstatic command gathers static files for production deployment
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 
 # -----------------------------------------------------------------------------
@@ -294,8 +313,8 @@ BUSINESS_PORTAL_URL = os.environ.get('BUSINESS_PORTAL_URL', 'http://localhost:80
 # -----------------------------------------------------------------------------
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://127.0.0.1:6379/0')
-# In local development without Redis running, execute tasks synchronously to guarantee immediate execution
-CELERY_TASK_ALWAYS_EAGER = os.environ.get('CELERY_ALWAYS_EAGER', 'True').lower() in ('true', '1', 'yes')
+# In production, tasks are dispatched asynchronously to Redis task queues; default to DEBUG unless explicitly overridden
+CELERY_TASK_ALWAYS_EAGER = os.environ.get('CELERY_ALWAYS_EAGER', str(DEBUG)).lower() in ('true', '1', 'yes')
 CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
@@ -425,15 +444,48 @@ REST_FRAMEWORK = {
 
 # SimpleJWT Settings
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),  # Reduced from 1 day to 30 mins to minimize blast radius of compromised tokens
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
 }
 
 # Media Files (Avatars, Covers, Portfolio)
-MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+USE_S3 = os.environ.get('USE_S3', 'False').lower() in ('true', '1', 'yes')
+
+if USE_S3:
+    # Amazon S3 / Cloudflare R2 object storage for distributed production environments
+    AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '')
+    AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+    AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME', '')
+    AWS_S3_REGION_NAME = os.environ.get('AWS_S3_REGION_NAME', 'us-east-1')
+    AWS_S3_ENDPOINT_URL = os.environ.get('AWS_S3_ENDPOINT_URL', None)
+    AWS_S3_CUSTOM_DOMAIN = os.environ.get('AWS_S3_CUSTOM_DOMAIN', None)
+    AWS_S3_FILE_OVERWRITE = False
+    AWS_DEFAULT_ACL = None
+    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    STORAGES = {
+        'default': {
+            'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage',
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
+    MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/" if AWS_S3_CUSTOM_DOMAIN else f"https://{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/"
+else:
+    # Local filesystem media storage for development and non-S3 environments
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+    STORAGES = {
+        'default': {
+            'BACKEND': 'django.core.files.storage.FileSystemStorage',
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
 
 # DRF Spectacular OpenAPI Schema Configuration
 SPECTACULAR_SETTINGS = {

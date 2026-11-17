@@ -155,3 +155,137 @@ class BusinessRegistrationPasswordValidationTests(TestCase):
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertEqual(res.data.get('unread_count'), 1)
 
+
+class BusinessCampaignModerationTests(TestCase):
+    """
+    Regression test suite verifying campaign creation moderation gates (REQ-CAM-01).
+
+    Ensures that campaigns submitted by businesses default to PENDING_REVIEW status
+    for administrator approval rather than being immediately published to the public marketplace,
+    while explicitly drafted campaigns remain in DRAFT status.
+    """
+
+    def setUp(self) -> None:
+        """
+        Initialize authenticated business user, profile, and test API client.
+        """
+        from apps.accounts.models import UserRole
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username='moderation_test_biz',
+            email='moderation@biz.test',
+            password='ComplexPassword#2026',
+            role=UserRole.BUSINESS
+        )
+        self.business_profile = BusinessProfile.objects.create(
+            user=self.user,
+            company_name='Moderation Test Brand',
+            contact_email=self.user.email
+        )
+        self.client.force_authenticate(user=self.user)
+        self.campaigns_url = '/api/v1/business/campaigns/'
+
+    def test_non_draft_campaign_creation_defaults_to_pending_review(self) -> None:
+        """
+        Verify that creating a campaign with is_draft=False assigns PENDING_REVIEW status.
+        """
+        from apps.campaigns.models import Campaign, CampaignStatus
+
+        payload = {
+            'title': 'Kerala Summer Launch 2026',
+            'budget': '1500.00',
+            'brief': 'Influencer video promotion for sustainable resort.',
+            'deliverables_summary': '1x Instagram Reel, 2x Stories',
+            'location_text': 'Wayanad, Kerala',
+            'is_draft': False
+        }
+
+        response = self.client.post(self.campaigns_url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn('id', response.data)
+
+        # Confirm campaign exists in database with PENDING_REVIEW status
+        campaign = Campaign.objects.get(id=response.data['id'])
+        self.assertEqual(campaign.status, CampaignStatus.PENDING_REVIEW)
+        self.assertNotEqual(campaign.status, CampaignStatus.PUBLISHED)
+
+    def test_draft_campaign_creation_retains_draft_status(self) -> None:
+        """
+        Verify that creating a campaign with is_draft=True assigns DRAFT status.
+        """
+        from apps.campaigns.models import Campaign, CampaignStatus
+
+        payload = {
+            'title': 'Unpublished Concept Brief',
+            'budget': '500.00',
+            'brief': 'Draft concept exploration.',
+            'is_draft': True
+        }
+
+        response = self.client.post(self.campaigns_url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        campaign = Campaign.objects.get(id=response.data['id'])
+        self.assertEqual(campaign.status, CampaignStatus.DRAFT)
+
+
+class ProductionSecuritySettingsTests(TestCase):
+    """
+    Regression test suite verifying production security configuration and settings hardening.
+
+    Validates that when DEBUG is False, all critical production security attributes
+    (SSL redirect, cookie security, HSTS, frame options, and proxy headers) are enforced.
+    """
+
+    def test_production_security_settings_when_debug_false(self) -> None:
+        """
+        Verify that settings module enforces strict HTTPS, HSTS, and cookie flags when DEBUG=False.
+        """
+        import importlib
+        import os
+        from unittest.mock import patch
+
+        env_overrides = {
+            'DEBUG': 'False',
+            'SECRET_KEY': 'production-hardening-test-secret-key-2026',
+            'SECURE_SSL_REDIRECT': 'True',
+            'REDIS_URL': 'redis://127.0.0.1:6379/1',
+        }
+
+        with patch.dict(os.environ, env_overrides, clear=False):
+            import core.settings as prod_settings
+            importlib.reload(prod_settings)
+            try:
+                # 1. Verify DEBUG is disabled
+                self.assertFalse(prod_settings.DEBUG)
+
+                # 2. Verify HTTPS redirect enforcement
+                self.assertTrue(prod_settings.SECURE_SSL_REDIRECT)
+
+                # 3. Verify session and CSRF cookie HTTPS flags
+                self.assertTrue(prod_settings.SESSION_COOKIE_SECURE)
+                self.assertTrue(prod_settings.CSRF_COOKIE_SECURE)
+
+                # 4. Verify browser protection headers
+                self.assertTrue(prod_settings.SECURE_BROWSER_XSS_FILTER)
+                self.assertTrue(prod_settings.SECURE_CONTENT_TYPE_NOSNIFF)
+                self.assertEqual(prod_settings.X_FRAME_OPTIONS, 'DENY')
+
+                # 5. Verify HSTS headers for 1 year
+                self.assertEqual(prod_settings.SECURE_HSTS_SECONDS, 31536000)
+                self.assertTrue(prod_settings.SECURE_HSTS_INCLUDE_SUBDOMAINS)
+                self.assertTrue(prod_settings.SECURE_HSTS_PRELOAD)
+
+                # 6. Verify reverse-proxy SSL header trust
+                self.assertEqual(prod_settings.SECURE_PROXY_SSL_HEADER, ('HTTP_X_FORWARDED_PROTO', 'https'))
+
+                # 7. Verify static root configuration
+                self.assertTrue(bool(prod_settings.STATIC_ROOT))
+                self.assertTrue(prod_settings.STATIC_ROOT.endswith('staticfiles'))
+
+                # 8. Verify token lifetime reduction (30 mins = 1800s)
+                self.assertEqual(prod_settings.SIMPLE_JWT['ACCESS_TOKEN_LIFETIME'].total_seconds(), 1800)
+            finally:
+                # Reload settings back to normal environment state
+                importlib.reload(prod_settings)
+

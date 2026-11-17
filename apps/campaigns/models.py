@@ -7,6 +7,7 @@ from apps.common.models import BaseModel
 class CampaignStatus(models.TextChoices):
     """Lifecycle progress state of a marketplace brand campaign."""
     DRAFT = 'DRAFT', 'Draft'
+    PENDING_REVIEW = 'PENDING_REVIEW', 'Pending Review'  # Brand submitted campaign awaiting admin moderation
     PUBLISHED = 'PUBLISHED', 'Published'
     APPLICATIONS = 'APPLICATIONS', 'Accepting Applications'
     SHORTLISTED = 'SHORTLISTED', 'Bids Shortlisted'

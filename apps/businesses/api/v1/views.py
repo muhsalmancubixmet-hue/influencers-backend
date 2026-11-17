@@ -485,10 +485,19 @@ class BusinessCampaignListCreateView(APIView):
 
     def post(self, request, *args, **kwargs):
         """
-        Publish or draft a new marketing campaign.
+        Create a new marketing campaign for the authenticated business.
 
-        :param request: Authenticated HTTP request with campaign brief and budget.
-        :return: Created campaign details.
+        If `is_draft` is True, the campaign status is set to DRAFT.
+        If `is_draft` is False (or omitted), the campaign is placed into PENDING_REVIEW
+        for staff moderation approval prior to public marketplace listing (REQ-CAM-01).
+
+        :param request: Authenticated HTTP request containing campaign details, brief, budget, and draft flag.
+        :type request: rest_framework.request.Request
+        :param args: Variable positional arguments.
+        :param kwargs: Variable keyword arguments.
+        :return: Serialized Campaign details with HTTP 201 Created on success, or error payload with HTTP 400/403.
+        :rtype: rest_framework.response.Response
+        :raises None: Handled internally returning DRF Response objects.
         """
         if not hasattr(request.user, 'business_profile'):
             return Response({'detail': "Business profile not found."}, status=status.HTTP_403_FORBIDDEN)
@@ -517,7 +526,12 @@ class BusinessCampaignListCreateView(APIView):
         except (ValueError, TypeError):
             total_budget_cents = 0
 
-        # Step 5: Create campaign entity matching database schema
+        # Step 5: Determine initial moderation lifecycle state
+        # Non-draft submissions enter PENDING_REVIEW rather than auto-publishing
+        is_draft = bool(request.data.get('is_draft'))
+        initial_status = CampaignStatus.DRAFT if is_draft else CampaignStatus.PENDING_REVIEW
+
+        # Step 6: Create campaign entity matching database schema
         cover_image_url = str(request.data.get('cover_image_url') or request.data.get('image') or '').strip()
         campaign = Campaign.objects.create(
             business=request.user.business_profile,
@@ -532,17 +546,17 @@ class BusinessCampaignListCreateView(APIView):
             target_audience=request.data.get('target_audience', '').strip(),
             location_text=location_text,
             creators_needed=int(request.data.get('creators_needed', 1)),
-            status=CampaignStatus.DRAFT if request.data.get('is_draft') else CampaignStatus.PUBLISHED
+            status=initial_status
         )
 
-        # Step 6: Record immutable administrative audit log
+        # Step 7: Record immutable administrative audit log
         record_audit_log(
             admin=request.user,
             action='CREATE_CAMPAIGN',
             entity='Campaign',
             entity_id=str(campaign.id),
             request=request,
-            reason=f"Brand {request.user.business_profile.company_name} launched campaign '{campaign.title}'"
+            reason=f"Brand {request.user.business_profile.company_name} submitted campaign '{campaign.title}' (status={initial_status})"
         )
 
         return Response(CampaignDetailSerializer(campaign).data, status=status.HTTP_201_CREATED)
