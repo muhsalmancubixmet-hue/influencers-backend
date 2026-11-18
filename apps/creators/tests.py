@@ -491,4 +491,71 @@ class CreatorAnalyticsViewTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
+class PublicCreatorDiscoveryFollowerFilterTests(APITestCase):
+    """
+    Test suite validating discovery follower metric boundary filtering.
+    Guarantees that min_followers=0 does not drop valid profiles and max_followers is obeyed.
+    """
+
+    def setUp(self) -> None:
+        """Seed creator profile and social account reach data."""
+        from apps.common.models import SocialPlatform
+        from apps.creators.models import SocialAccount
+        self.user = User.objects.create_user(
+            username='discovery_creator',
+            email='discovery.creator@example.com',
+            password='SecurePassword123!',
+            role=UserRole.CREATOR
+        )
+        self.creator = CreatorProfile.objects.create(
+            user=self.user,
+            handle='discovery_pro',
+            display_name='Discovery Salman',
+            status='ACTIVE'
+        )
+        self.platform, _ = SocialPlatform.objects.get_or_create(
+            slug='instagram',
+            defaults={'name': 'Instagram'}
+        )
+        SocialAccount.objects.create(
+            creator=self.creator,
+            platform=self.platform,
+            username='discovery_insta',
+            followers_count=250000,
+            engagement_rate=4.5
+        )
+        self.discovery_url = reverse('public_creators_list')
+
+    def test_zero_min_followers_preserves_discovery_results(self) -> None:
+        """
+        Ensure query with min_followers=0 does not inadvertently exclude creators.
+
+        :return: None
+        """
+        response = self.client.get(self.discovery_url, {'search': 'Discovery Salman', 'min_followers': '0'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.data.get('results', [])
+        handles = [r['handle'] for r in results]
+        self.assertIn('discovery_pro', handles)
+
+    def test_max_followers_upper_bound_filter(self) -> None:
+        """
+        Ensure upper bound max_followers correctly isolates profiles within threshold.
+
+        :return: None
+        """
+        # Upper bound below 250k should exclude discovery_pro
+        response = self.client.get(self.discovery_url, {'search': 'Discovery Salman', 'max_followers': '100'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        handles = [r['handle'] for r in response.data.get('results', [])]
+        self.assertNotIn('discovery_pro', handles)
+
+        # Upper bound above 250k should include discovery_pro
+        response = self.client.get(self.discovery_url, {'search': 'Discovery Salman', 'max_followers': '300'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        handles = [r['handle'] for r in response.data.get('results', [])]
+        self.assertIn('discovery_pro', handles)
+
+
+
 

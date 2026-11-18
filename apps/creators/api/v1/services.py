@@ -31,9 +31,9 @@ def update_creator_profile(profile: CreatorProfile, validated_data: Dict[str, An
         if attr == 'name':
             profile.display_name = val
         elif attr == 'preferences' and isinstance(val, dict):
-            existing_pref = profile.preferences or {}
+            existing_pref = dict(profile.preferences) if isinstance(profile.preferences, dict) else {}
             existing_pref.update(val)
-            profile.preferences = existing_pref
+            setattr(profile, 'preferences', existing_pref)
         else:
             setattr(profile, attr, val)
 
@@ -49,9 +49,9 @@ def update_creator_profile(profile: CreatorProfile, validated_data: Dict[str, An
         score += 10
     if profile.primary_location:
         score += 15
-    if profile.categories.exists():
+    if getattr(profile, 'categories', None) and profile.categories.exists():
         score += 10
-    profile.completion_percentage = min(score, 100)
+    setattr(profile, 'completion_percentage', min(score, 100))
 
     # Step 3: Persist state changes to database
     profile.save()
@@ -404,16 +404,34 @@ def get_public_creators(filters: Dict[str, Any]):
 
     # Step 9: Reach and audience metrics filtering (Followers & Engagement)
     min_followers = filters.get('min_followers')
-    if min_followers:
+    max_followers = filters.get('max_followers')
+    follower_filters = Q()
+
+    if min_followers is not None and str(min_followers).strip():
         try:
             min_fol_val = int(min_followers)
-            # If frontends pass in 'K' units (e.g. 50 meaning 50,000), support both
-            target_fol = min_fol_val * 1000 if min_fol_val < 1000 else min_fol_val
-            qs = qs.annotate(
-                total_reach=Sum('social_accounts__followers_count', filter=Q(social_accounts__is_deleted=False))
-            ).filter(total_reach__gte=target_fol)
+            # Only apply lower-bound reach constraint if positive threshold specified
+            if min_fol_val > 0:
+                # If frontends pass in 'K' units (e.g. 50 meaning 50,000), support both
+                target_min = min_fol_val * 1000 if min_fol_val < 1000 else min_fol_val
+                follower_filters &= Q(total_reach__gte=target_min)
         except (ValueError, TypeError):
             pass
+
+    if max_followers is not None and str(max_followers).strip():
+        try:
+            max_fol_val = int(max_followers)
+            # Only apply upper-bound reach constraint if positive threshold specified
+            if max_fol_val > 0:
+                target_max = max_fol_val * 1000 if max_fol_val < 1000 else max_fol_val
+                follower_filters &= Q(total_reach__lte=target_max)
+        except (ValueError, TypeError):
+            pass
+
+    if follower_filters:
+        qs = qs.annotate(
+            total_reach=Sum('social_accounts__followers_count', filter=Q(social_accounts__is_deleted=False))
+        ).filter(follower_filters)
 
     min_engagement = filters.get('min_engagement')
     if min_engagement:
