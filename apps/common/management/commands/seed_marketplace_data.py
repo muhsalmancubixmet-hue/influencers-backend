@@ -31,45 +31,49 @@ class Command(BaseCommand):
         with transaction.atomic():
             # 1. Seed or resolve Social Platforms
             platforms_map = {}
-            for plat_name, icon in [
-                ("Instagram", "instagram"),
-                ("YouTube", "youtube"),
-                ("TikTok", "video"),
-                ("Facebook", "facebook"),
-                ("LinkedIn", "linkedin"),
-                ("Pinterest", "image")
+            for plat_name, icon, slug, color in [
+                ("Instagram", "Instagram", "instagram", "#E1306C"),
+                ("YouTube", "Youtube", "youtube", "#FF0000"),
+                ("TikTok", "Video", "tiktok", "#000000"),
+                ("Facebook", "Facebook", "facebook", "#1877F2"),
+                ("LinkedIn", "Linkedin", "linkedin", "#0A66C2"),
+                ("Pinterest", "Image", "pinterest", "#E60023")
             ]:
-                p, _ = SocialPlatform.objects.get_or_create(
-                    name=plat_name,
-                    defaults={'icon': icon, 'is_active': True}
-                )
+                p = SocialPlatform.objects.filter(name=plat_name).first()
+                if not p:
+                    p = SocialPlatform.objects.create(
+                        name=plat_name,
+                        slug=slug,
+                        icon_name=icon,
+                        color_code=color,
+                        is_active=True
+                    )
                 platforms_map[plat_name] = p
 
             # 2. Seed or resolve Hierarchical Countries, Regions, and Cities
-            india, _ = Location.objects.get_or_create(
-                name="India",
-                defaults={"type": LocationType.COUNTRY, "country_code": "IN", "is_active": True}
-            )
-            kerala, _ = Location.objects.get_or_create(
-                name="Kerala",
-                defaults={"type": LocationType.REGION, "parent": india, "country_code": "IN", "is_active": True}
-            )
-            uae, _ = Location.objects.get_or_create(
-                name="United Arab Emirates",
-                defaults={"type": LocationType.COUNTRY, "country_code": "AE", "is_active": True}
-            )
-            uk, _ = Location.objects.get_or_create(
-                name="United Kingdom",
-                defaults={"type": LocationType.COUNTRY, "country_code": "GB", "is_active": True}
-            )
-            us, _ = Location.objects.get_or_create(
-                name="United States",
-                defaults={"type": LocationType.COUNTRY, "country_code": "US", "is_active": True}
-            )
-            singapore_c, _ = Location.objects.get_or_create(
-                name="Singapore",
-                defaults={"type": LocationType.COUNTRY, "country_code": "SG", "is_active": True}
-            )
+            india = Location.objects.filter(name="India", type=LocationType.COUNTRY).first()
+            if not india:
+                india = Location.objects.create(name="India", type=LocationType.COUNTRY, country_code="IN", is_active=True)
+
+            kerala = Location.objects.filter(name="Kerala", type=LocationType.REGION).first()
+            if not kerala:
+                kerala = Location.objects.create(name="Kerala", type=LocationType.REGION, parent=india, country_code="IN", is_active=True)
+
+            uae = Location.objects.filter(name="United Arab Emirates", type=LocationType.COUNTRY).first()
+            if not uae:
+                uae = Location.objects.create(name="United Arab Emirates", type=LocationType.COUNTRY, country_code="AE", is_active=True)
+
+            uk = Location.objects.filter(name="United Kingdom", type=LocationType.COUNTRY).first()
+            if not uk:
+                uk = Location.objects.create(name="United Kingdom", type=LocationType.COUNTRY, country_code="GB", is_active=True)
+
+            us = Location.objects.filter(name="United States", type=LocationType.COUNTRY).first()
+            if not us:
+                us = Location.objects.create(name="United States", type=LocationType.COUNTRY, country_code="US", is_active=True)
+
+            singapore_c = Location.objects.filter(name="Singapore", type=LocationType.COUNTRY).first()
+            if not singapore_c:
+                singapore_c = Location.objects.create(name="Singapore", type=LocationType.COUNTRY, country_code="SG", is_active=True)
 
             kerala_places = [
                 {"city": "Kochi", "parent": kerala, "country_code": "IN", "lat": 9.9312, "lng": 76.2673},
@@ -85,17 +89,17 @@ class Command(BaseCommand):
             ]
             locations_map = {}
             for pl in kerala_places:
-                loc, _ = Location.objects.get_or_create(
-                    name=pl["city"],
-                    defaults={
-                        "type": LocationType.CITY,
-                        "parent": pl["parent"],
-                        "country_code": pl["country_code"],
-                        "latitude": Decimal(str(pl["lat"])),
-                        "longitude": Decimal(str(pl["lng"])),
-                        "is_active": True
-                    }
-                )
+                loc = Location.objects.filter(name=pl["city"]).first()
+                if not loc:
+                    loc = Location.objects.create(
+                        name=pl["city"],
+                        type=LocationType.CITY,
+                        parent=pl["parent"],
+                        country_code=pl["country_code"],
+                        latitude=Decimal(str(pl["lat"])),
+                        longitude=Decimal(str(pl["lng"])),
+                        is_active=True
+                    )
                 locations_map[pl["city"]] = loc
 
             # 3. Seed Categories
@@ -106,10 +110,14 @@ class Command(BaseCommand):
             ]
             categories_map = {}
             for idx, cname in enumerate(category_names):
-                cat, _ = Category.objects.get_or_create(
-                    name=cname,
-                    defaults={"order": idx, "is_active": True}
-                )
+                cat = Category.objects.filter(name=cname).first()
+                if not cat:
+                    cat = Category.objects.create(
+                        name=cname,
+                        slug=cname.lower().replace(" ", "-"),
+                        order=idx,
+                        is_active=True
+                    )
                 categories_map[cname] = cat
 
             # 4. Seed Creators
