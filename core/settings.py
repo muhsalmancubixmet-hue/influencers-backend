@@ -52,6 +52,10 @@ ALLOWED_HOSTS = [h.strip() for h in raw_allowed.split(',') if h.strip() and h.st
 if not ALLOWED_HOSTS:
     ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 
+# Auto-permit PythonAnywhere host domain
+if '.pythonanywhere.com' not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append('.pythonanywhere.com')
+
 # -----------------------------------------------------------------------------
 # Production HTTPS, HSTS & Cookie Security
 # -----------------------------------------------------------------------------
@@ -358,7 +362,10 @@ else:
     # Auto-populate from ALLOWED_HOSTS and CORS_ALLOWED_ORIGINS
     _auto_csrf = set()
     for _h in ALLOWED_HOSTS:
-        if _h and _h not in ('localhost', '127.0.0.1'):
+        if _h and _h.startswith('.'):
+            _auto_csrf.add(f"https://*{_h}")
+            _auto_csrf.add(f"http://*{_h}")
+        elif _h and _h not in ('localhost', '127.0.0.1'):
             _auto_csrf.add(f"https://{_h}")
             _auto_csrf.add(f"http://{_h}")
         elif _h:
