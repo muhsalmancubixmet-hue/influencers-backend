@@ -350,15 +350,34 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'x-target-portal',
 ]
 
+# CSRF Trusted Origins (required in Django 4+ for admin and API POST requests over HTTPS)
+_csrf_env = os.environ.get('CSRF_TRUSTED_ORIGINS', '')
+if _csrf_env:
+    CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in _csrf_env.split(',') if origin.strip()]
+else:
+    # Auto-populate from ALLOWED_HOSTS and CORS_ALLOWED_ORIGINS
+    _auto_csrf = set()
+    for _h in ALLOWED_HOSTS:
+        if _h and _h not in ('localhost', '127.0.0.1'):
+            _auto_csrf.add(f"https://{_h}")
+            _auto_csrf.add(f"http://{_h}")
+        elif _h:
+            _auto_csrf.add(f"http://{_h}")
+    for _o in CORS_ALLOWED_ORIGINS:
+        if _o and not _o.startswith('*'):
+            _auto_csrf.add(_o)
+    CSRF_TRUSTED_ORIGINS = sorted(list(_auto_csrf))
+
 
 
 # Caching & Distributed Throttle Store Configuration
-# Outside local development (DEBUG=False), RedisCache is strictly required to share
-# throttle counters and cache entries across workers. If REDIS_URL/CACHE_URL is unset,
-# raise ImproperlyConfigured immediately instead of silently falling back.
+# Outside local development (DEBUG=False), RedisCache is required to share
+# throttle counters and cache entries across workers, UNLESS CACHE_BACKEND=locmem
+# is explicitly configured for single-host deployments (e.g. PythonAnywhere).
+CACHE_BACKEND = os.environ.get('CACHE_BACKEND', '').strip().lower()
 REDIS_CACHE_URL = os.environ.get('REDIS_URL') or os.environ.get('CACHE_URL')
 
-if not DEBUG:
+if not DEBUG and CACHE_BACKEND != 'locmem':
     if not REDIS_CACHE_URL:
         from django.core.exceptions import ImproperlyConfigured
         raise ImproperlyConfigured(
@@ -381,8 +400,8 @@ if not DEBUG:
         }
     }
 else:
-    # In local development (DEBUG=True), use RedisCache if REDIS_URL is provided, else fallback to LocMemCache
-    if REDIS_CACHE_URL:
+    # In local development (DEBUG=True) or CACHE_BACKEND=locmem, use RedisCache if REDIS_URL is provided, else fallback to LocMemCache
+    if REDIS_CACHE_URL and CACHE_BACKEND != 'locmem':
         redis_options = {}
         if REDIS_CACHE_URL.startswith('rediss://'):
             import ssl
