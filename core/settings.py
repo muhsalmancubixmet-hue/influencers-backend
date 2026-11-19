@@ -348,6 +348,15 @@ CORS_ALLOWED_ORIGINS = [
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = False
 
+# Dynamic CORS regex whitelist (permits all Vercel production and preview deployments)
+_cors_regex_env = os.environ.get('CORS_ALLOWED_ORIGIN_REGEXES', '')
+if _cors_regex_env:
+    CORS_ALLOWED_ORIGIN_REGEXES = [r.strip() for r in _cors_regex_env.split(',') if r.strip()]
+else:
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r"^https:\/\/.*\.vercel\.app$",
+    ]
+
 # Whitelisted HTTP headers permitted in cross-origin preflight requests
 from corsheaders.defaults import default_headers
 
@@ -360,8 +369,8 @@ _csrf_env = os.environ.get('CSRF_TRUSTED_ORIGINS', '')
 if _csrf_env:
     CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in _csrf_env.split(',') if origin.strip()]
 else:
-    # Auto-populate from ALLOWED_HOSTS and CORS_ALLOWED_ORIGINS
-    _auto_csrf = set()
+    # Auto-populate from ALLOWED_HOSTS, CORS_ALLOWED_ORIGINS, and Vercel subdomains
+    _auto_csrf = {'https://*.vercel.app'}
     for _h in ALLOWED_HOSTS:
         if _h and _h.startswith('.'):
             _auto_csrf.add(f"https://*{_h}")
