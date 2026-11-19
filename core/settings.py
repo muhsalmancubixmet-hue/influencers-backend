@@ -46,15 +46,11 @@ DJANGO_ENV = (
 # Optional explicit database engine flag: 'sqlite' | 'postgres'
 DB_ENGINE = os.environ.get('DB_ENGINE', '').strip().lower()
 
-# Permitted host headers loaded from environment (wildcard '*' explicitly prohibited)
+# Permitted host headers loaded strictly from environment (12-Factor standard; wildcard '*' prohibited)
 raw_allowed = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1')
 ALLOWED_HOSTS = [h.strip() for h in raw_allowed.split(',') if h.strip() and h.strip() != '*']
 if not ALLOWED_HOSTS:
     ALLOWED_HOSTS = ['localhost', '127.0.0.1']
-
-# Auto-permit PythonAnywhere host domain
-if '.pythonanywhere.com' not in ALLOWED_HOSTS:
-    ALLOWED_HOSTS.append('.pythonanywhere.com')
 
 # -----------------------------------------------------------------------------
 # Production HTTPS, HSTS & Cookie Security
@@ -275,7 +271,12 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
-STATIC_URL = 'static/'
+_raw_static_url = os.environ.get('STATIC_URL', '/static/').strip() or '/static/'
+if not _raw_static_url.startswith('/') and not _raw_static_url.startswith('http'):
+    _raw_static_url = f"/{_raw_static_url}"
+if not _raw_static_url.endswith('/'):
+    _raw_static_url = f"{_raw_static_url}/"
+STATIC_URL = _raw_static_url
 # Absolute filesystem path where Django's collectstatic command gathers static files for production deployment
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
