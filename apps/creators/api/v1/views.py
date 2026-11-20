@@ -1,5 +1,5 @@
 from django.db import transaction
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ValidationError, ObjectDoesNotExist
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -51,9 +51,20 @@ from apps.common.api.v1.services import (
 
 
 def get_creator_profile_or_403(user):
-    """Ensure user has an active creator profile tenant boundary."""
-    profile = getattr(user, 'creator_profile', None)
-    if not profile or profile.is_deleted:
+    """
+    Ensure user has an active creator profile tenant boundary.
+    Safeguards against RelatedObjectDoesNotExist exceptions if user has no profile.
+
+    :param user: Authenticated User instance.
+    :return: CreatorProfile instance if found and not soft-deleted, otherwise None.
+    """
+    if not user or not user.is_authenticated:
+        return None
+    try:
+        profile = getattr(user, 'creator_profile', None)
+    except ObjectDoesNotExist:
+        return None
+    if not profile or getattr(profile, 'is_deleted', False):
         return None
     return profile
 

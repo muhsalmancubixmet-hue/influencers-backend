@@ -226,7 +226,22 @@ class CreatorProfileSerializer(serializers.ModelSerializer):
                     else:
                         mutable_data.pop('current_location', None)
 
-        return super().to_internal_value(mutable_data)
+        # Map full_name or name alias to display_name
+        if ('name' in mutable_data or 'full_name' in mutable_data) and 'display_name' not in mutable_data:
+            mutable_data['display_name'] = mutable_data.get('display_name') or mutable_data.get('full_name') or mutable_data.get('name')
+
+        # Extract categories and languages collections for relational sync
+        categories_input = mutable_data.pop('categories', None)
+        languages_input = mutable_data.pop('languages', None)
+
+        ret = super().to_internal_value(mutable_data)
+
+        if categories_input is not None:
+            ret['categories_input'] = categories_input
+        if languages_input is not None:
+            ret['languages_input'] = languages_input
+
+        return ret
 
     class Meta:
         model = CreatorProfile

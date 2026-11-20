@@ -1,6 +1,6 @@
 from typing import Dict, Any, List, Optional
 import uuid
-from django.db import transaction
+from django.db import transaction, models
 from django.core.exceptions import ValidationError
 
 from apps.accounts.models import User
@@ -17,44 +17,110 @@ from apps.common.api.v1.services import record_audit_log
 
 def update_creator_profile(profile: CreatorProfile, validated_data: Dict[str, Any]) -> CreatorProfile:
     """
-    Update core attributes of a creator profile and recalculate completeness.
+    Update core attributes of a creator profile, sync categories/languages, and recalculate completeness.
     
-    Supports merging dictionary preferences, aliasing display_name, and synchronizing user state.
+    Supports merging dictionary preferences, aliasing display_name, synchronizing taxonomy categories
+    and languages, and updating completion percentage.
     
     :param profile: CreatorProfile instance to mutate.
     :param validated_data: Dictionary of sanitized input fields.
     :return: Updated CreatorProfile instance.
     :raises ValidationError: If data values violate domain constraints.
     """
-    # Step 1: Process and assign attribute updates
-    for attr, val in validated_data.items():
-        if attr == 'name':
-            profile.display_name = val
-        elif attr == 'preferences' and isinstance(val, dict):
-            existing_pref = dict(profile.preferences) if isinstance(profile.preferences, dict) else {}
-            existing_pref.update(val)
-            setattr(profile, 'preferences', existing_pref)
-        else:
-            setattr(profile, attr, val)
+    from apps.taxonomies.models import Category
+    from apps.creators.models import CreatorCategory, CreatorLanguage
 
-    # Step 2: Recalculate profile completeness score
-    score = 20  # Base registration score
-    if profile.bio:
-        score += 15
-    if profile.about:
-        score += 15
-    if profile.photo_url:
-        score += 15
-    if profile.cover_url:
-        score += 10
-    if profile.primary_location:
-        score += 15
-    if getattr(profile, 'categories', None) and profile.categories.exists():
-        score += 10
-    setattr(profile, 'completion_percentage', min(score, 100))
+    # Step 1: Pop relational collections from validated_data
+    categories_input = validated_data.pop('categories_input', None)
+    languages_input = validated_data.pop('languages_input', None)
 
-    # Step 3: Persist state changes to database
-    profile.save()
+    with transaction.atomic():
+        # Process and assign core attribute updates
+        for attr, val in validated_data.items():
+            if attr in ('name', 'full_name'):
+                profile.display_name = val
+            elif attr == 'preferences' and isinstance(val, dict):
+                existing_pref = dict(profile.preferences) if isinstance(profile.preferences, dict) else {}
+                existing_pref.update(val)
+                setattr(profile, 'preferences', existing_pref)
+            else:
+                setattr(profile, attr, val)
+
+        # Step 2: Synchronize taxonomy categories if provided
+        if categories_input is not None:
+            target_cat_ids = set()
+            for cat_item in categories_input:
+                if not cat_item:
+                    continue
+                cat_str = str(cat_item).strip()
+                cat_obj = Category.objects.filter(
+                    models.Q(name__iexact=cat_str) | models.Q(slug__iexact=cat_str),
+                    is_deleted=False
+                ).first()
+                if not cat_obj:
+                    try:
+                        uuid_val = uuid.UUID(cat_str)
+                        cat_obj = Category.objects.filter(id=uuid_val, is_deleted=False).first()
+                    except (ValueError, TypeError):
+                        pass
+                if cat_obj:
+                    target_cat_ids.add(cat_obj.id)
+                    CreatorCategory.objects.get_or_create(creator=profile, category=cat_obj)
+
+            # Prune categories not in current selection
+            CreatorCategory.objects.filter(creator=profile).exclude(category_id__in=target_cat_ids).delete()
+
+        # Step 3: Synchronize language capabilities if provided
+        if languages_input is not None:
+            LANG_MAP = {
+                'english': 'en', 'en': 'en',
+                'malayalam': 'ml', 'ml': 'ml',
+                'hindi': 'hi', 'hi': 'hi',
+                'tamil': 'ta', 'ta': 'ta',
+                'telugu': 'te', 'te': 'te',
+                'kannada': 'kn', 'kn': 'kn',
+                'arabic': 'ar', 'ar': 'ar',
+                'spanish': 'es', 'es': 'es',
+                'french': 'fr', 'fr': 'fr',
+                'german': 'de', 'de': 'de'
+            }
+            target_codes = set()
+            if isinstance(languages_input, str):
+                lang_items = [l.strip() for l in languages_input.split(',') if l.strip()]
+            else:
+                lang_items = languages_input
+
+            for lang_item in lang_items:
+                if not lang_item:
+                    continue
+                cleaned = str(lang_item).strip().lower()
+                code = LANG_MAP.get(cleaned, cleaned[:10])
+                if code:
+                    target_codes.add(code)
+                    CreatorLanguage.objects.get_or_create(creator=profile, language_code=code)
+
+            # Prune languages not in current selection
+            CreatorLanguage.objects.filter(creator=profile).exclude(language_code__in=target_codes).delete()
+
+        # Step 4: Recalculate profile completeness score
+        score = 20  # Base registration score
+        if profile.bio:
+            score += 15
+        if profile.about:
+            score += 15
+        if profile.photo_url:
+            score += 15
+        if profile.cover_url:
+            score += 10
+        if profile.primary_location:
+            score += 15
+        if profile.categories.exists():
+            score += 10
+        profile.completion_percentage = min(score, 100)
+
+        # Step 5: Persist state changes to database
+        profile.save()
+
     return profile
 
 

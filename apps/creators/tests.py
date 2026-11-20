@@ -557,5 +557,85 @@ class PublicCreatorDiscoveryFollowerFilterTests(APITestCase):
         self.assertIn('discovery_pro', handles)
 
 
+class CreatorProfileUpdateRegressionTests(APITestCase):
+    """
+    Regression test suite verifying creator profile update, category/language sync,
+    and missing profile boundary protection.
+    """
+
+    def setUp(self) -> None:
+        """Seed test user, categories, and client."""
+        from apps.taxonomies.models import Category
+        self.user = User.objects.create_user(
+            username='creator_test_user',
+            email='creator.test@example.com',
+            password='SecurePassword123!',
+            role=UserRole.CREATOR
+        )
+        self.profile = CreatorProfile.objects.create(
+            user=self.user,
+            handle='test_creator',
+            display_name='Test Creator'
+        )
+        self.cat1 = Category.objects.create(name='Fashion', slug='fashion', is_active=True)
+        self.cat2 = Category.objects.create(name='Travel', slug='travel', is_active=True)
+        self.profile_url = reverse('creator_profile')
+
+    def test_get_creator_profile_or_403_safeguards_missing_profile(self) -> None:
+        """
+        Ensure user without a creator_profile does not throw unhandled RelatedObjectDoesNotExist 500 error.
+        """
+        from apps.creators.api.v1.views import get_creator_profile_or_403
+        empty_user = User.objects.create_user(
+            username='empty_profile_user',
+            email='empty@example.com',
+            password='Password123!',
+            role=UserRole.CREATOR
+        )
+        # Must return None safely rather than raising RelatedObjectDoesNotExist exception
+        result = get_creator_profile_or_403(empty_user)
+        self.assertIsNone(result)
+
+    def test_patch_creator_profile_syncs_categories_and_languages(self) -> None:
+        """
+        PATCH /api/v1/creator/profile/ with categories and languages synchronizes join tables.
+        """
+        self.client.force_authenticate(user=self.user)
+        payload = {
+            'display_name': 'Updated Creator Name',
+            'bio': 'Passionate fashion and travel creator',
+            'about': 'In-depth narrative of collaborations',
+            'categories': ['Fashion', 'Travel'],
+            'languages': ['English', 'Malayalam'],
+            'currency': 'INR'
+        }
+        response = self.client.patch(self.profile_url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.display_name, 'Updated Creator Name')
+        self.assertEqual(self.profile.bio, 'Passionate fashion and travel creator')
+        self.assertEqual(self.profile.currency, 'INR')
+
+        # Verify categories synced
+        linked_cat_names = set(self.profile.categories.values_list('category__name', flat=True))
+        self.assertEqual(linked_cat_names, {'Fashion', 'Travel'})
+
+        # Verify languages synced
+        linked_langs = set(self.profile.languages.values_list('language_code', flat=True))
+        self.assertEqual(linked_langs, {'en', 'ml'})
+
+    def test_patch_creator_profile_accepts_name_alias(self) -> None:
+        """
+        Ensure sending 'name' or 'full_name' maps to 'display_name'.
+        """
+        self.client.force_authenticate(user=self.user)
+        response = self.client.patch(self.profile_url, {'name': 'New Aliased Name'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.display_name, 'New Aliased Name')
+
+
+
 
 
