@@ -6,7 +6,7 @@ security boundaries according to the engineering rules.
 """
 
 import os
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.core.exceptions import ValidationError, ImproperlyConfigured
 from django.core.signing import TimestampSigner
 from rest_framework.test import APIClient
@@ -389,6 +389,125 @@ class StaffInvitePasswordValidationTests(TestCase):
         self.assertTrue(result['user'].check_password('Secure#Staff$Pass2026!'))
         self.invitation.refresh_from_db()
         self.assertTrue(self.invitation.is_accepted)
+
+
+class EmailVerificationPortalResolutionTests(TestCase):
+    """
+    Test suite verifying that transactional and verification emails dynamically
+    resolve frontend portal URLs according to requesting origin and 12-factor settings,
+    while strictly rejecting untrusted origins to prevent phishing/open redirect attacks.
+    """
+
+    def setUp(self):
+        """Set up test user and fixtures."""
+        from django.core.mail import outbox
+        self.outbox = outbox
+        self.user = User.objects.create_user(
+            username="verifytester",
+            email="tester@influencers.com",
+            password="Secure#Password123!",
+            role=UserRole.CREATOR,
+            is_active=False
+        )
+
+    def test_send_verification_email_task_resolves_whitelisted_origin(self):
+        """
+        When a creator registers from a whitelisted Vercel frontend,
+        the magic link URL in the email must use that frontend's base URL.
+        """
+        from apps.accounts.tasks import send_verification_email_task
+        from django.core import mail
+
+        mail.outbox.clear()
+        target_origin = "https://creator-hub-git-main-salman-kc-cubixmet.vercel.app"
+
+        with override_settings(
+            CORS_ALLOWED_ORIGIN_REGEXES=[r"^https:\/\/.*\.vercel\.app$"],
+            CREATOR_HUB_URL="http://localhost:8080",
+            CELERY_TASK_ALWAYS_EAGER=True
+        ):
+            send_verification_email_task.apply(args=[
+                str(self.user.id),
+                self.user.email,
+                "valid-token-12345",
+                "TempPass123!",
+                target_origin
+            ])
+
+        self.assertEqual(len(mail.outbox), 1)
+        sent_email = mail.outbox[0]
+        expected_url = f"{target_origin}/verify-email?token=valid-token-12345"
+        self.assertIn(expected_url, sent_email.body)
+        self.assertNotIn("http://localhost:8080/verify-email", sent_email.body)
+
+    def test_send_verification_email_task_rejects_untrusted_phishing_origin(self):
+        """
+        When a registration request passes an untrusted/phishing origin,
+        the task must reject it and safely fall back to settings.CREATOR_HUB_URL.
+        """
+        from apps.accounts.tasks import send_verification_email_task
+        from django.core import mail
+
+        mail.outbox.clear()
+        untrusted_origin = "https://evil-phishing-site.attacker.com"
+
+        with override_settings(
+            CORS_ALLOWED_ORIGINS=["http://localhost:8080"],
+            CORS_ALLOWED_ORIGIN_REGEXES=[r"^https:\/\/.*\.vercel\.app$"],
+            CREATOR_HUB_URL="https://creator-hub-fallback.vercel.app",
+            DEBUG=False,
+            CELERY_TASK_ALWAYS_EAGER=True
+        ):
+            send_verification_email_task.apply(args=[
+                str(self.user.id),
+                self.user.email,
+                "valid-token-12345",
+                "TempPass123!",
+                untrusted_origin
+            ])
+
+        self.assertEqual(len(mail.outbox), 1)
+        sent_email = mail.outbox[0]
+        # Must NOT contain attacker URL
+        self.assertNotIn(untrusted_origin, sent_email.body)
+        # Must contain legitimate fallback URL
+        expected_fallback = "https://creator-hub-fallback.vercel.app/verify-email?token=valid-token-12345"
+        self.assertIn(expected_fallback, sent_email.body)
+
+    def test_register_creator_api_endpoint_forwards_origin_header(self):
+        """
+        POST /api/v1/auth/register/ with HTTP_ORIGIN header forwards the requesting
+        origin to the email task, generating an email with the matching domain.
+        """
+        from django.core import mail
+        from rest_framework.test import APIClient
+
+        mail.outbox.clear()
+        client = APIClient()
+        target_origin = "https://creator-hub-git-main-salman-kc-cubixmet.vercel.app"
+
+        with override_settings(
+            CORS_ALLOWED_ORIGIN_REGEXES=[r"^https:\/\/.*\.vercel\.app$"],
+            CREATOR_HUB_URL="http://localhost:8080",
+            CELERY_TASK_ALWAYS_EAGER=True
+        ):
+            response = client.post(
+                '/api/v1/auth/creator/register/',
+                {
+                    'email': 'dynamic_creator@test.com',
+                    'username': 'dynamiccreator',
+                    'password': 'Secure#Password123!'
+                },
+                HTTP_ORIGIN=target_origin,
+                format='json'
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(len(mail.outbox), 1)
+        sent_email = mail.outbox[0]
+        self.assertIn(target_origin, sent_email.body)
+        self.assertNotIn("http://localhost:8080/verify-email", sent_email.body)
+
 
 
 

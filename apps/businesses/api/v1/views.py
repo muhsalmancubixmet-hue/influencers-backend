@@ -252,20 +252,25 @@ class BusinessRegistrationView(APIView):
         try:
             from django.conf import settings
             from apps.businesses.tasks import send_business_welcome_email_task
+            from apps.common.ws_auth import get_request_origin
+
+            request_origin = get_request_origin(request)
             is_eager = getattr(settings, 'CELERY_TASK_ALWAYS_EAGER', False)
             if is_eager:
                 send_business_welcome_email_task.apply(args=[
                     str(user.id),
                     user.email,
                     business.company_name,
-                    contact_name
+                    contact_name,
+                    request_origin
                 ])
             else:
                 send_business_welcome_email_task.delay(
                     str(user.id),
                     user.email,
                     business.company_name,
-                    contact_name
+                    contact_name,
+                    request_origin
                 )
         except Exception as mail_exc:
             import logging

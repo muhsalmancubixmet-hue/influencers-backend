@@ -12,6 +12,7 @@ from apps.accounts.models import UserRole
 from apps.common.ws_auth import (
     JwtAuthMiddleware,
     is_origin_allowed,
+    get_request_origin,
     extract_token_and_subprotocol,
 )
 
@@ -56,9 +57,48 @@ class WebSocketSecurityAndAuthTests(TestCase):
 
         :return: None
         """
-        with override_settings(CORS_ALLOWED_ORIGINS=['http://localhost:8080'], DEBUG=False):
+        with override_settings(CORS_ALLOWED_ORIGINS=['http://localhost:8080'], CORS_ALLOWED_ORIGIN_REGEXES=[], DEBUG=False):
             self.assertFalse(is_origin_allowed('http://evil-attacker.com'))
             self.assertFalse(is_origin_allowed('https://phishing-site.org'))
+
+    def test_is_origin_allowed_regex_whitelist(self) -> None:
+        """
+        Verify that domains matching CORS_ALLOWED_ORIGIN_REGEXES are accepted,
+        such as preview or production Vercel frontend deployments.
+
+        :return: None
+        """
+        with override_settings(
+            CORS_ALLOWED_ORIGINS=['http://localhost:8080'],
+            CORS_ALLOWED_ORIGIN_REGEXES=[r"^https:\/\/.*\.vercel\.app$"],
+            DEBUG=False
+        ):
+            self.assertTrue(is_origin_allowed('https://creator-hub-git-main-salman-kc-cubixmet.vercel.app'))
+            self.assertTrue(is_origin_allowed('https://kerala-creator-collab.vercel.app'))
+            self.assertTrue(is_origin_allowed('https://pixel-perfect-replication-alpha-indol.vercel.app'))
+            self.assertFalse(is_origin_allowed('https://malicious-vercel.app.fake-domain.com'))
+
+    def test_get_request_origin_extraction(self) -> None:
+        """
+        Verify that get_request_origin cleanly extracts the origin from Origin
+        or Referer HTTP headers and normalizes trailing slashes.
+
+        :return: None
+        """
+        from django.test.client import RequestFactory
+        factory = RequestFactory()
+
+        # Case 1: Standard Origin header
+        req1 = factory.post('/api/v1/auth/register/', HTTP_ORIGIN='https://creator-hub.vercel.app/')
+        self.assertEqual(get_request_origin(req1), 'https://creator-hub.vercel.app')
+
+        # Case 2: Fallback to Referer header root
+        req2 = factory.post('/api/v1/auth/register/', HTTP_REFERER='https://creator-hub.vercel.app/signup?step=1')
+        self.assertEqual(get_request_origin(req2), 'https://creator-hub.vercel.app')
+
+        # Case 3: Empty headers return empty string
+        req3 = factory.post('/api/v1/auth/register/')
+        self.assertEqual(get_request_origin(req3), '')
 
     def test_extract_token_from_subprotocols_list(self) -> None:
         """

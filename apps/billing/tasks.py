@@ -275,6 +275,7 @@ def send_payment_invoice_email_task(self, payment_id: str) -> bool:
 
     # Generate PDF
     pdf_bytes = generate_invoice_pdf(payment)
+    business_portal_url = getattr(settings, 'BUSINESS_PORTAL_URL', getattr(settings, 'BRAND_SUITE_URL', 'http://localhost:8083')).rstrip('/')
 
     html_content = f"""<!DOCTYPE html>
 <html>
@@ -333,7 +334,7 @@ def send_payment_invoice_email_task(self, payment_id: str) -> bool:
       </div>
 
       <div style="text-align: center; margin: 28px 0;">
-        <a href="http://localhost:8083/subscription" style="display: inline-block; background-color: #047857; color: #ffffff; text-decoration: none; font-size: 14px; font-weight: 600; padding: 12px 28px; border-radius: 10px;">
+        <a href="{business_portal_url}/subscription" style="display: inline-block; background-color: #047857; color: #ffffff; text-decoration: none; font-size: 14px; font-weight: 600; padding: 12px 28px; border-radius: 10px;">
           View Subscription & Invoices →
         </a>
       </div>

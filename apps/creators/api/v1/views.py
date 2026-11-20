@@ -338,13 +338,12 @@ class AdminInfluencerListView(APIView):
         except Exception:
             # Fallback direct dispatch if message broker queue is disconnected
             try:
-                send_verification_email_task(
-                    None,
+                send_verification_email_task.apply(args=[
                     str(user.id),
                     user.email,
                     verification_token,
                     temp_password
-                )
+                ])
             except Exception:
                 pass
 

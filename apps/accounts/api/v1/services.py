@@ -18,7 +18,8 @@ def invite_staff_member(
     role_template_id: str,
     invited_by: User,
     first_name: str = '',
-    last_name: str = ''
+    last_name: str = '',
+    frontend_base_url: str = ''
 ) -> StaffInvitation:
     """
     Issue an administrative onboarding invitation to a prospective staff member.
@@ -33,6 +34,7 @@ def invite_staff_member(
     :param invited_by: Staff/Admin user authorizing the invitation.
     :param first_name: Optional first name.
     :param last_name: Optional last name.
+    :param frontend_base_url: Optional origin of the requesting admin portal client.
     :return: Persisted StaffInvitation record.
     :raises ValidationError: If email is already registered as staff or role template does not exist.
     """
@@ -134,7 +136,8 @@ def invite_staff_member(
             str(invitation.token),
             role_template.name,
             inviter_name,
-            temporary_password
+            temporary_password,
+            frontend_base_url
         ])
     else:
         try:
@@ -143,7 +146,8 @@ def invite_staff_member(
                 str(invitation.token),
                 role_template.name,
                 inviter_name,
-                temporary_password
+                temporary_password,
+                frontend_base_url
             )
         except Exception:
             send_staff_invitation_email_task.apply(args=[
@@ -151,7 +155,8 @@ def invite_staff_member(
                 str(invitation.token),
                 role_template.name,
                 inviter_name,
-                temporary_password
+                temporary_password,
+                frontend_base_url
             ])
 
     return invitation
@@ -364,7 +369,8 @@ def update_staff_profile(
 def register_creator(
     email: str,
     username: str,
-    password: Optional[str] = None
+    password: Optional[str] = None,
+    frontend_base_url: str = ''
 ) -> dict:
     """
     Register a new public creator account requiring only email and username.
@@ -376,6 +382,7 @@ def register_creator(
     :param email: Unique electronic mail address of the creator.
     :param username: Desired creator handle / username (e.g. 'mayasharma').
     :param password: Optional raw plaintext password (auto-generated if omitted).
+    :param frontend_base_url: Optional origin of the requesting frontend client.
     :return: Dictionary containing created User, CreatorProfile, verification token, and temporary password.
     :raises ValidationError: If email or username is already registered.
     """
@@ -442,18 +449,19 @@ def register_creator(
             str(user.id),
             user.email,
             token,
-            temp_password
+            temp_password,
+            frontend_base_url
         )
     except Exception as exc:
         # Fallback direct call if Celery queue service is unavailable
         try:
-            send_verification_email_task(
-                None,
+            send_verification_email_task.apply(args=[
                 str(user.id),
                 user.email,
                 token,
-                temp_password
-            )
+                temp_password,
+                frontend_base_url
+            ])
         except Exception:
             pass
 

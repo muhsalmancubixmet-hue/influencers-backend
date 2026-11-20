@@ -307,11 +307,12 @@ if '<' in _raw_from and not _raw_from.startswith('"'):
 else:
     DEFAULT_FROM_EMAIL = _raw_from
 
-# Portal Domain URLs for Email Links
-CREATOR_HUB_URL = os.environ.get('CREATOR_HUB_URL', 'http://localhost:8080')
-ADMIN_PORTAL_URL = os.environ.get('ADMIN_PORTAL_URL', 'http://localhost:8081')
-MARKETPLACE_URL = os.environ.get('MARKETPLACE_URL', 'http://localhost:8082')
-BUSINESS_PORTAL_URL = os.environ.get('BUSINESS_PORTAL_URL', 'http://localhost:8083')
+# Portal Domain URLs for Email Links & Dynamic Multi-Frontend Resolution
+CREATOR_HUB_URL = os.environ.get('CREATOR_HUB_URL', 'http://localhost:8080').strip().rstrip('/')
+ADMIN_PORTAL_URL = os.environ.get('ADMIN_PORTAL_URL', 'http://localhost:8081').strip().rstrip('/')
+MARKETPLACE_URL = os.environ.get('MARKETPLACE_URL', 'http://localhost:8082').strip().rstrip('/')
+BUSINESS_PORTAL_URL = os.environ.get('BUSINESS_PORTAL_URL', 'http://localhost:8083').strip().rstrip('/')
+BRAND_SUITE_URL = BUSINESS_PORTAL_URL
 
 # -----------------------------------------------------------------------------
 # Celery & Redis Task Broker Configuration

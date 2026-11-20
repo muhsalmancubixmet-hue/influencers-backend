@@ -8,7 +8,8 @@ against SimpleJWT, verifies connection origin against CORS whitelists, and attac
 the resolved authenticated User entity and selected subprotocol to the ASGI scope.
 """
 
-from urllib.parse import parse_qs
+import re
+from urllib.parse import parse_qs, urlparse
 from channels.middleware import BaseMiddleware
 from channels.db import database_sync_to_async
 from django.conf import settings
@@ -38,9 +39,13 @@ def get_user_from_token(token_string: str):
 
 def is_origin_allowed(origin: str) -> bool:
     """
-    Verify whether the WebSocket handshake Origin header is permitted.
+    Verify whether the WebSocket handshake or HTTP Origin header is permitted.
     
-    :param origin: Origin header URL string (e.g. 'http://localhost:8080').
+    Checks against explicit CORS_ALLOWED_ORIGINS as well as regex patterns defined
+    in CORS_ALLOWED_ORIGIN_REGEXES (e.g. *.vercel.app). Also allows local development
+    origins when settings.DEBUG is True.
+    
+    :param origin: Origin header URL string (e.g. 'http://localhost:8080' or 'https://creator-hub.vercel.app').
     :return: True if origin is allowed, False otherwise.
     """
     if not origin:
@@ -52,10 +57,19 @@ def is_origin_allowed(origin: str) -> bool:
     if allow_all or '*' in allowed_origins:
         return True
 
-    clean_origin = origin.rstrip('/')
+    clean_origin = origin.strip().rstrip('/')
     for allowed in allowed_origins:
-        if clean_origin == allowed.rstrip('/'):
+        if clean_origin == allowed.strip().rstrip('/'):
             return True
+
+    # Check against CORS_ALLOWED_ORIGIN_REGEXES (e.g. ^https:\/\/.*\.vercel\.app$)
+    allowed_regexes = getattr(settings, 'CORS_ALLOWED_ORIGIN_REGEXES', [])
+    for regex in allowed_regexes:
+        try:
+            if re.match(regex, clean_origin):
+                return True
+        except Exception:
+            pass
 
     # If running in DEBUG mode, allow standard local development origins
     if getattr(settings, 'DEBUG', False):
@@ -63,6 +77,48 @@ def is_origin_allowed(origin: str) -> bool:
             return True
 
     return False
+
+
+def get_request_origin(request) -> str:
+    """
+    Extract and normalize the HTTP Origin or Referer root from an incoming HTTP request.
+
+    Used by transactional email dispatches and client redirection flows to determine
+    the requesting portal origin, ensuring multi-frontend SaaS deployments dynamically
+    resolve without hardcoded localhost defaults.
+
+    :param request: Django or DRF HttpRequest instance.
+    :return: Normalized origin URL string (e.g. 'https://creator-hub.vercel.app') or empty string.
+    """
+    if not request:
+        return ""
+
+    origin = ""
+    # 1. Attempt retrieval from standard request.headers
+    if hasattr(request, 'headers') and request.headers:
+        origin = request.headers.get('Origin') or request.headers.get('origin') or ""
+
+    # 2. Fallback to WSGI/ASGI META environment dictionary
+    if not origin and hasattr(request, 'META') and request.META:
+        origin = request.META.get('HTTP_ORIGIN', "")
+
+    # 3. Fallback to Referer header root if Origin was omitted by client
+    if not origin:
+        referer = ""
+        if hasattr(request, 'headers') and request.headers:
+            referer = request.headers.get('Referer') or request.headers.get('referer') or ""
+        if not referer and hasattr(request, 'META') and request.META:
+            referer = request.META.get('HTTP_REFERER', "")
+
+        if referer:
+            try:
+                parsed = urlparse(referer)
+                if parsed.scheme and parsed.netloc:
+                    origin = f"{parsed.scheme}://{parsed.netloc}"
+            except Exception:
+                origin = ""
+
+    return origin.strip().rstrip('/')
 
 
 def extract_token_and_subprotocol(scope: dict):

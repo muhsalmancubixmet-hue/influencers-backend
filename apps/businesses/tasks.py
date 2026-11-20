@@ -18,7 +18,8 @@ def send_business_welcome_email_task(
     user_id: str,
     email: str,
     company_name: str,
-    contact_name: str = ""
+    contact_name: str = "",
+    frontend_base_url: str = ""
 ) -> bool:
     """
     Dispatch a branded HTML & text welcome email to a newly registered business / brand.
@@ -28,11 +29,18 @@ def send_business_welcome_email_task(
     :param email: Recipient electronic mail address of the business.
     :param company_name: Legal or trading company name of the brand.
     :param contact_name: Optional contact person name.
+    :param frontend_base_url: Optional requesting origin of the business portal client.
     :return: True if the email dispatch succeeded, False otherwise.
     :raises Exception: Propagates mail dispatch errors to Celery retry handler.
     """
+    from apps.common.ws_auth import is_origin_allowed
+
     greeting_name = contact_name.strip() if contact_name.strip() else company_name.strip()
-    brand_suite_url = getattr(settings, 'BRAND_SUITE_URL', 'http://localhost:8083').rstrip('/')
+    default_suite_url = getattr(settings, 'BUSINESS_PORTAL_URL', getattr(settings, 'BRAND_SUITE_URL', 'http://localhost:8083')).rstrip('/')
+    if frontend_base_url and is_origin_allowed(frontend_base_url):
+        brand_suite_url = frontend_base_url.strip().rstrip('/')
+    else:
+        brand_suite_url = default_suite_url
     login_url = f"{brand_suite_url}/login"
 
     subject = f"Welcome to Influencers.com — Your Brand Workspace is Ready ({company_name})"

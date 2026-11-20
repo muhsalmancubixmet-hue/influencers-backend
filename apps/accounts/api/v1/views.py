@@ -121,13 +121,17 @@ class StaffListCreateView(APIView):
         serializer = StaffInviteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        from apps.common.ws_auth import get_request_origin
+        request_origin = get_request_origin(request)
+
         try:
             invitation = invite_staff_member(
                 email=serializer.validated_data['email'],
                 role_template_id=str(serializer.validated_data['role_template_id']),
                 invited_by=request.user,
                 first_name=serializer.validated_data.get('first_name', ''),
-                last_name=serializer.validated_data.get('last_name', '')
+                last_name=serializer.validated_data.get('last_name', ''),
+                frontend_base_url=request_origin
             )
         except ValidationError as err:
             err_msg = " ".join(err.messages) if hasattr(err, 'messages') else (err.message if hasattr(err, 'message') else str(err))
@@ -312,11 +316,15 @@ class CreatorRegistrationView(APIView):
         serializer = CreatorRegistrationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        from apps.common.ws_auth import get_request_origin
+        request_origin = get_request_origin(request)
+
         try:
             result = register_creator(
                 email=serializer.validated_data['email'],
                 username=serializer.validated_data['username'],
-                password=serializer.validated_data.get('password')
+                password=serializer.validated_data.get('password'),
+                frontend_base_url=request_origin
             )
         except ValidationError as err:
             err_msg = " ".join(err.messages) if hasattr(err, 'messages') else (err.message if hasattr(err, 'message') else str(err))

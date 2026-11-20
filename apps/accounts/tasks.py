@@ -18,7 +18,8 @@ def send_verification_email_task(
     user_id: str,
     email: str,
     verification_token: str,
-    temporary_password: str = ""
+    temporary_password: str = "",
+    frontend_base_url: str = ""
 ) -> bool:
     """
     Dispatch a branded HTML & text welcome/magic link email to a newly registered creator.
@@ -33,13 +34,22 @@ def send_verification_email_task(
     :param email: Recipient electronic mail address of the creator.
     :param verification_token: Cryptographically signed token for verification and authentication.
     :param temporary_password: Plaintext temporary password generated at registration.
+    :param frontend_base_url: Optional origin of the requesting frontend client (validated against CORS).
     :return: True if the email dispatch succeeded.
     :raises Exception: Propagates mail dispatch errors to Celery retry handler.
     """
     # -------------------------------------------------------------------------
     # STEP 1: Determine Portal Base URLs and action targets
     # -------------------------------------------------------------------------
-    frontend_base = getattr(settings, 'CREATOR_HUB_URL', 'http://localhost:8080').rstrip('/')
+    from apps.common.ws_auth import is_origin_allowed
+
+    default_base = getattr(settings, 'CREATOR_HUB_URL', 'http://localhost:8080').rstrip('/')
+    # Validate client-provided origin against CORS whitelist to prevent phishing/open redirects
+    if frontend_base_url and is_origin_allowed(frontend_base_url):
+        frontend_base = frontend_base_url.strip().rstrip('/')
+    else:
+        frontend_base = default_base
+
     magic_link_url = f"{frontend_base}/verify-email?token={verification_token}"
     revoke_url = f"{frontend_base}/revoke?token={verification_token}"
 
@@ -113,7 +123,8 @@ def send_staff_invitation_email_task(
     invitation_token: str,
     role_name: str = "Admin Staff",
     invited_by_name: str = "A Super Admin",
-    temporary_password: str = ""
+    temporary_password: str = "",
+    frontend_base_url: str = ""
 ) -> bool:
     """
     Dispatch an onboarding invitation email to a prospective administrative team member.
@@ -132,13 +143,22 @@ def send_staff_invitation_email_task(
     :param role_name: Name of the assigned operational role template (e.g. 'Support', 'Manager').
     :param invited_by_name: Display name or email of the inviting administrator.
     :param temporary_password: Plaintext temporary password generated for initial onboarding.
+    :param frontend_base_url: Optional origin of the requesting frontend client (validated against CORS).
     :return: True if the invitation email was successfully dispatched.
     :raises Exception: Propagates mail dispatch errors to the Celery retry handler.
     """
     # -------------------------------------------------------------------------
     # STEP 1: Determine Control Panel Base URLs and action targets
     # -------------------------------------------------------------------------
-    admin_base = getattr(settings, 'ADMIN_PORTAL_URL', 'http://localhost:8081').rstrip('/')
+    from apps.common.ws_auth import is_origin_allowed
+
+    default_base = getattr(settings, 'ADMIN_PORTAL_URL', 'http://localhost:8081').rstrip('/')
+    # Validate client-provided origin against CORS whitelist to prevent phishing/open redirects
+    if frontend_base_url and is_origin_allowed(frontend_base_url):
+        admin_base = frontend_base_url.strip().rstrip('/')
+    else:
+        admin_base = default_base
+
     invite_url = f"{admin_base}/invite/accept?token={invitation_token}"
     revoke_url = f"{admin_base}/invite/accept?token={invitation_token}&action=revoke"
 
